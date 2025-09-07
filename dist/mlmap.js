@@ -31,11 +31,50 @@
     return Math.hypot(x2 - x1, y2 - y1);
   }
 
+  // src/utils/storage.ts
+  function saveWorkspace(workspace) {
+    const cacheKey = `mlmap:workspace<${workspace.id}>`;
+    localStorage.setItem(cacheKey, JSON.stringify(workspace));
+  }
+  function loadWorkspace(workspaceId) {
+    let currentWorkspaceId = localStorage.getItem("mlmap:currentWorkspaceId");
+    if (!currentWorkspaceId) {
+      currentWorkspaceId = Date.now().toString();
+      localStorage.setItem("mlmap:currentWorkspaceId", currentWorkspaceId);
+      const defaultWorkspace = {
+        id: currentWorkspaceId,
+        name: "New Workspace",
+        version: "1.0",
+        layout: {}
+      };
+      localStorage.setItem(`mlmap:workspace<${currentWorkspaceId}>`, JSON.stringify(defaultWorkspace));
+      return defaultWorkspace;
+    }
+    const cacheKey = `mlmap:workspace<${workspaceId || currentWorkspaceId}>`;
+    const raw = localStorage.getItem(cacheKey);
+    return raw ? JSON.parse(raw) : null;
+  }
+  function deleteWorkspace(workspaceId) {
+    const cacheKey = `mlmap:workspace<${workspaceId}>`;
+    localStorage.removeItem(cacheKey);
+  }
+  function loadAllWorkspaces() {
+    const workspaces = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("mlmap:workspace<")) {
+        const raw = localStorage.getItem(key);
+        if (raw) workspaces.push(JSON.parse(raw));
+      }
+    }
+    return workspaces;
+  }
+
   // src/lib/data.ts
-  var VERSION = "0.0.1.3";
+  var VERSION = "0.0.2.0";
 
   // src/uiControls/index.ts
-  function initUIControls(dymoMaptastic2) {
+  function initUIControls(baseMLMap) {
     const helpPanel = document.createElement("div");
     helpPanel.id = "controls";
     helpPanel.innerHTML = `
@@ -101,10 +140,20 @@ MLMap | Version ${VERSION}
       zIndex: "1000002",
       display: "none"
     });
-    shapePanel.innerHTML = `<strong>Shapes</strong><div id="shapeList"></div>
+    shapePanel.innerHTML = `
+    <strong>Shapes</strong>
+    <div id="shapeList"></div>
     <button id="addSquare">Add Square</button>
     <button id="addCircle">Add Circle</button>
-    <button id="addTriangle">Add Triangle</button>`;
+    <button id="addTriangle">Add Triangle</button>
+    <hr>
+    <strong>Workspaces</strong>
+    <select id="workspaceSelector" style="width:100%;margin-top:5px;"></select>
+    <div style="display:flex;gap:4px;margin-top:5px;">
+      <button id="addWorkspace">New</button>
+      <button id="renameWorkspace">Rename</button>
+      <button id="deleteWorkspace">Delete</button>
+    </div>`;
     document.body.appendChild(shapePanel);
     let isDraggingPanel = false;
     let dragOffsetX = 0;
@@ -150,7 +199,7 @@ MLMap | Version ${VERSION}
         div.style.borderLeft = "50px solid transparent";
         div.style.borderRight = "50px solid transparent";
         div.style.borderBottom = "100px solid white";
-        dymoMaptastic2.addLayer(
+        baseMLMap.addLayer(
           div,
           clonePoints(
             [
@@ -163,7 +212,7 @@ MLMap | Version ${VERSION}
         );
       }
       document.body.appendChild(div);
-      dymoMaptastic2.addLayer(div);
+      baseMLMap.addLayer(div);
       dynamicShapes.push({ id: div.id, type, x, y });
       updateShapeList();
       saveShapes();
@@ -223,7 +272,7 @@ MLMap | Version ${VERSION}
         div.style.borderBottom = "100px solid white";
       }
       document.body.appendChild(div);
-      dymoMaptastic2.addLayer(div);
+      baseMLMap.addLayer(div);
     }
     addSquareBtn.addEventListener("click", () => createShape("square"));
     addCircleBtn.addEventListener("click", () => createShape("circle"));
@@ -235,8 +284,8 @@ MLMap | Version ${VERSION}
         shapePanel.style.display = shapePanel.style.display === "none" ? "block" : "none";
       }
     });
-    const originalSetConfigEnabled = dymoMaptastic2.setConfigEnabled;
-    dymoMaptastic2.setConfigEnabled = function(enabled) {
+    const originalSetConfigEnabled = baseMLMap.setConfigEnabled;
+    baseMLMap.setConfigEnabled = function(enabled) {
       originalSetConfigEnabled(enabled);
       shapePanel.style.display = enabled ? "block" : "none";
     };
@@ -258,6 +307,65 @@ MLMap | Version ${VERSION}
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
+    const workspaceSelector = shapePanel.querySelector("#workspaceSelector");
+    let workspaces = loadAllWorkspaces();
+    let activeWorkspace = workspaces.find((ws) => ws.id === localStorage.getItem("mlmap:currentWorkspaceId")) || null;
+    if (!activeWorkspace && workspaces.length) {
+      activeWorkspace = workspaces[0];
+      localStorage.setItem("mlmap:currentWorkspaceId", activeWorkspace.id);
+    }
+    if (activeWorkspace) baseMLMap.setLayout(activeWorkspace.layout);
+    if (workspaces.length === 1) document.getElementById("deleteWorkspace").disabled = true;
+    function updateWorkspaceSelector() {
+      workspaceSelector.innerHTML = "";
+      workspaces.forEach((ws) => {
+        const opt = document.createElement("option");
+        opt.value = ws.id;
+        opt.textContent = ws.name;
+        if (activeWorkspace && activeWorkspace.id === ws.id) opt.selected = true;
+        workspaceSelector.appendChild(opt);
+      });
+    }
+    ;
+    function setActiveWorkspace(ws) {
+      localStorage.setItem("mlmap:currentWorkspaceId", ws.id);
+      window.location.reload();
+    }
+    ;
+    document.getElementById("addWorkspace")?.addEventListener("click", () => {
+      const name = prompt("Workspace name:", "New Workspace") || "New Workspace";
+      const ws = { id: Date.now().toString(), name, version: "1.0", layout: {} };
+      workspaces.push(ws);
+      saveWorkspace(ws);
+      setActiveWorkspace(ws);
+    });
+    document.getElementById("renameWorkspace")?.addEventListener("click", () => {
+      if (!activeWorkspace) return;
+      const name = prompt("New name:", activeWorkspace.name) || activeWorkspace.name;
+      activeWorkspace.name = name;
+      saveWorkspace(activeWorkspace);
+      updateWorkspaceSelector();
+    });
+    document.getElementById("deleteWorkspace")?.addEventListener("click", () => {
+      if (!activeWorkspace || workspaces.length === 1) return;
+      if (workspaces.length === 1) document.getElementById("deleteWorkspace").disabled = true;
+      deleteWorkspace(activeWorkspace.id);
+      workspaces = workspaces.filter((ws) => ws.id !== activeWorkspace?.id);
+      activeWorkspace = workspaces[0] || null;
+      if (activeWorkspace) baseMLMap.setLayout(activeWorkspace.layout);
+      updateWorkspaceSelector();
+    });
+    workspaceSelector.addEventListener("change", () => {
+      const ws = workspaces.find((w) => w.id === workspaceSelector.value);
+      if (ws) setActiveWorkspace(ws);
+    });
+    updateWorkspaceSelector();
+    baseMLMap.layoutChangeListener = () => {
+      if (activeWorkspace) {
+        activeWorkspace.layout = baseMLMap.getLayout();
+        saveWorkspace(activeWorkspace);
+      }
+    };
   }
 
   // src/main.ts
@@ -371,7 +479,6 @@ MLMap | Version ${VERSION}
   var historyLimit = 50;
   var MLMap = class {
     constructor(config = {}) {
-      this.localStorageKey = "mlmap.layers";
       this.layers = [];
       this.configActive = false;
       this.dragging = false;
@@ -443,22 +550,21 @@ MLMap | Version ${VERSION}
       if (historyStack.length > historyLimit) historyStack.shift();
     }
     saveSettings() {
-      const data = {
-        version: "1.0",
+      const data = loadWorkspace();
+      saveWorkspace({
+        id: data?.id,
+        name: data?.name,
+        version: data?.version,
         layout: this.getLayout()
-      };
-      localStorage.setItem(this.localStorageKey, JSON.stringify(data));
+      });
     }
     loadSettings() {
-      const raw = localStorage.getItem(this.localStorageKey);
-      if (raw) {
-        try {
-          const data = JSON.parse(raw);
-          if (data.version === "1.0" && data.layout) this.setLayout(data.layout);
-          else console.warn("MLMap: localStorage version mismatch, skipping load.");
-        } catch (e) {
-          console.error("MLMap: Failed to parse layout from localStorage.", e);
-        }
+      try {
+        const data = loadWorkspace();
+        if (data?.version === "1.0" && data?.layout) this.setLayout(data.layout);
+        else console.warn("MLMap: localStorage version mismatch, skipping load.");
+      } catch (e) {
+        console.error("MLMap: Failed to parse layout from localStorage.", e);
       }
     }
     resize() {

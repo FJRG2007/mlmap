@@ -2,8 +2,9 @@ import { MLMap } from "../main";
 import * as Types from "../types";
 import { VERSION } from "../lib/data";
 import * as utils from "../utils/basics";
+import * as storage from "../utils/storage";
 
-export function initUIControls(dymoMaptastic: MLMap) {
+export function initUIControls(baseMLMap: MLMap) {
 
     // ---- HELP PANEL ----
     const helpPanel = document.createElement("div");
@@ -78,10 +79,20 @@ MLMap | Version ${VERSION}
         display: "none"
     });
 
-    shapePanel.innerHTML = `<strong>Shapes</strong><div id="shapeList"></div>
+    shapePanel.innerHTML = `
+    <strong>Shapes</strong>
+    <div id="shapeList"></div>
     <button id="addSquare">Add Square</button>
     <button id="addCircle">Add Circle</button>
-    <button id="addTriangle">Add Triangle</button>`;
+    <button id="addTriangle">Add Triangle</button>
+    <hr>
+    <strong>Workspaces</strong>
+    <select id="workspaceSelector" style="width:100%;margin-top:5px;"></select>
+    <div style="display:flex;gap:4px;margin-top:5px;">
+      <button id="addWorkspace">New</button>
+      <button id="renameWorkspace">Rename</button>
+      <button id="deleteWorkspace">Delete</button>
+    </div>`;
 
     document.body.appendChild(shapePanel);
 
@@ -139,7 +150,7 @@ MLMap | Version ${VERSION}
             div.style.borderRight = "50px solid transparent";
             div.style.borderBottom = "100px solid white";
 
-            dymoMaptastic.addLayer(div,
+            baseMLMap.addLayer(div,
                 utils.clonePoints([
                     [50, 0],
                     [100, 100],
@@ -150,7 +161,7 @@ MLMap | Version ${VERSION}
         }
 
         document.body.appendChild(div);
-        dymoMaptastic.addLayer(div);
+        baseMLMap.addLayer(div);
         dynamicShapes.push({ id: div.id, type, x, y });
         updateShapeList();
         saveShapes();
@@ -218,7 +229,7 @@ MLMap | Version ${VERSION}
         }
 
         document.body.appendChild(div);
-        dymoMaptastic.addLayer(div);
+        baseMLMap.addLayer(div);
     }
 
     // ---- LISTENERS ----
@@ -235,8 +246,8 @@ MLMap | Version ${VERSION}
     });
 
     // Override edit mode.
-    const originalSetConfigEnabled = dymoMaptastic.setConfigEnabled;
-    dymoMaptastic.setConfigEnabled = function (enabled: boolean) {
+    const originalSetConfigEnabled = baseMLMap.setConfigEnabled;
+    baseMLMap.setConfigEnabled = function (enabled: boolean) {
         originalSetConfigEnabled(enabled);
         shapePanel.style.display = enabled ? "block" : "none";
     };
@@ -261,4 +272,71 @@ MLMap | Version ${VERSION}
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
-}
+
+    const workspaceSelector = shapePanel.querySelector("#workspaceSelector") as HTMLSelectElement;
+    let workspaces = storage.loadAllWorkspaces();
+    let activeWorkspace: Types.Workspace | null = workspaces.find(ws => ws.id === localStorage.getItem("mlmap:currentWorkspaceId")) || null;
+
+    if (!activeWorkspace && workspaces.length) {
+        activeWorkspace = workspaces[0];
+        localStorage.setItem("mlmap:currentWorkspaceId", activeWorkspace.id);
+    }
+
+    if (activeWorkspace)  baseMLMap.setLayout(activeWorkspace.layout);
+
+    if (workspaces.length === 1) (document.getElementById("deleteWorkspace") as HTMLButtonElement).disabled = true;
+
+    function updateWorkspaceSelector() {
+        workspaceSelector.innerHTML = "";
+        workspaces.forEach(ws => {
+            const opt = document.createElement("option");
+            opt.value = ws.id;
+            opt.textContent = ws.name;
+            if (activeWorkspace && activeWorkspace.id === ws.id) opt.selected = true;
+            workspaceSelector.appendChild(opt);
+        });
+    };
+
+    function setActiveWorkspace(ws: Types.Workspace) {
+        localStorage.setItem("mlmap:currentWorkspaceId", ws.id);
+        // TODO: Temporarily, it needs to be improved.
+        window.location.reload();
+    };
+
+    document.getElementById("addWorkspace")?.addEventListener("click", () => {
+        const name = prompt("Workspace name:", "New Workspace") || "New Workspace";
+        const ws: Types.Workspace = { id: Date.now().toString(), name, version: "1.0", layout: {} };
+        workspaces.push(ws);
+        storage.saveWorkspace(ws);
+        setActiveWorkspace(ws);
+    });
+    document.getElementById("renameWorkspace")?.addEventListener("click", () => {
+        if (!activeWorkspace) return;
+        const name = prompt("New name:", activeWorkspace.name) || activeWorkspace.name;
+        activeWorkspace.name = name;
+        storage.saveWorkspace(activeWorkspace);
+        updateWorkspaceSelector();
+    });
+    document.getElementById("deleteWorkspace")?.addEventListener("click", () => {
+        if (!activeWorkspace || workspaces.length === 1) return;
+        if (workspaces.length === 1) (document.getElementById("deleteWorkspace") as HTMLButtonElement).disabled = true;
+        storage.deleteWorkspace(activeWorkspace.id);
+        workspaces = workspaces.filter(ws => ws.id !== activeWorkspace?.id);
+        activeWorkspace = workspaces[0] || null;
+        if (activeWorkspace) baseMLMap.setLayout(activeWorkspace.layout);
+        updateWorkspaceSelector();
+    });
+    workspaceSelector.addEventListener("change", () => {
+        const ws = workspaces.find(w => w.id === workspaceSelector.value);
+        if (ws) setActiveWorkspace(ws);
+    });
+
+    updateWorkspaceSelector();
+
+    baseMLMap.layoutChangeListener = () => {
+        if (activeWorkspace) {
+            activeWorkspace.layout = baseMLMap.getLayout();
+            storage.saveWorkspace(activeWorkspace);
+        }
+    }
+};

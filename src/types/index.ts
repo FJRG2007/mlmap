@@ -26,3 +26,10 @@ export interface Shape {
     x: number;
     y: number;
 };
+
+export type Workspace = {
+    id: string;
+    name: string;
+    version: string;
+    layout: any;
+};

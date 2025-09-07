@@ -1,5 +1,6 @@
 import * as Types from "./types";
 import * as utils from "./utils/basics";
+import * as storage from "./utils/storage";
 import { initUIControls } from "./uiControls";
 
 const solve = (() => {
@@ -105,8 +106,7 @@ export class MLMap {
     private autoSave: boolean;
     private autoLoad: boolean;
     private layerList: (HTMLElement | string)[];
-    private layoutChangeListener: () => void;
-    private localStorageKey = "mlmap.layers";
+    public layoutChangeListener: () => void;
 
     private canvas: HTMLCanvasElement;
     private context: CanvasRenderingContext2D;
@@ -198,23 +198,22 @@ export class MLMap {
     };
 
     private saveSettings() {
-        const data = {
-            version: "1.0",
+        const data = storage.loadWorkspace()!;
+        storage.saveWorkspace({
+            id: data?.id,
+            name: data?.name,
+            version: data?.version,
             layout: this.getLayout()
-        };
-        localStorage.setItem(this.localStorageKey, JSON.stringify(data));
+        });
     };
 
     private loadSettings() {
-        const raw = localStorage.getItem(this.localStorageKey);
-        if (raw) {
-            try {
-                const data = JSON.parse(raw);
-                if (data.version === "1.0" && data.layout) this.setLayout(data.layout);
-                else console.warn("MLMap: localStorage version mismatch, skipping load.");
-            } catch (e) {
-                console.error("MLMap: Failed to parse layout from localStorage.", e);
-            }
+        try {
+            const data = storage.loadWorkspace();
+            if (data?.version === "1.0" && data?.layout) this.setLayout(data.layout);
+            else console.warn("MLMap: localStorage version mismatch, skipping load.");
+        } catch (e) {
+            console.error("MLMap: Failed to parse layout from localStorage.", e);
         }
     };
 
@@ -736,7 +735,7 @@ export class MLMap {
                 this.showCrosshairs = !this.showCrosshairs;
                 dirty = true;
                 break;
-            
+
             case 76: // l key, toggle layer names.
                 if (!this.configActive) return;
                 this.showLayerNames = !this.showLayerNames;
