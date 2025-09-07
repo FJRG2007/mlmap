@@ -1,0 +1,15 @@
+# Development.
+.env
+secrets
+api.http
+
+# Development / Node.
+build
+node_modules
+
+# Development / Python.
+__pycache__
+
+# IDE configurations.
+.idea
+.vscode
