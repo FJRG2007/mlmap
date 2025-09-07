@@ -1,0 +1,243 @@
+import { MLMap } from "../main";
+import * as Types from "../types";
+import { VERSION } from "../lib/data";
+import * as utils from "../utils/basics";
+
+export function initUIControls(dymoMaptastic: MLMap) {
+
+    // ---- HELP PANEL ----
+    const helpPanel = document.createElement("div");
+    helpPanel.id = "controls";
+
+    helpPanel.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+  <strong>Controls</strong>
+  <button id="closeHelp" style="background:#808080;color:white;border:none;padding:2px 6px;cursor:pointer;">X</button>
+</div>
+<pre style="margin-top:5px;">
+SHIFT-Space: Toggle edit mode
+
+In Edit Mode
+
+click / drag:       select and move quads/corner points
+SHIFT + drag:       move selected quad/corner point with 10x precision
+ALT + drag:         rotate/scale selected quad
+Arrow keys:         move selected quad/corner point
+SHIFT + Arrow keys: move selected quad/corner point by 10 pixels
+ALT + Arrow keys:   rotate/scale selected quad
+'s':                Solo/unsolo selected quad
+'c':                Toggle mouse cursor crosshairs
+'r':                Rotate selected layer 90 degrees clock-wise
+'h':                Flip selected layer horizontally
+'v':                Flip selected layer vertically
+'b':                Show/Hide projector bounds
+
+MLMap | Version ${VERSION}
+</pre>
+    `;
+
+    Object.assign(helpPanel.style, {
+        position: "fixed",
+        top: "20px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "600px",
+        background: "#404040",
+        color: "white",
+        fontFamily: "monospace",
+        padding: "10px",
+        border: "2px solid #808080",
+        zIndex: "1000001",
+        cursor: "move",
+        display: "none",
+        userSelect: "none"
+    });
+
+    document.body.appendChild(helpPanel);
+
+    document.getElementById("closeHelp")?.addEventListener("click", () => {
+        helpPanel.style.display = "none";
+    });
+
+    // ---- SHAPE PANEL ----
+    const shapePanel = document.createElement("div");
+    shapePanel.id = "shapePanel";
+    Object.assign(shapePanel.style, {
+        position: "fixed",
+        top: "10px",
+        right: "10px",
+        width: "200px",
+        background: "#303030",
+        color: "white",
+        fontFamily: "monospace",
+        padding: "10px",
+        border: "2px solid #808080",
+        zIndex: "1000002",
+        display: "none"
+    });
+
+    shapePanel.innerHTML = `<strong>Shapes</strong><div id="shapeList"></div>
+    <button id="addSquare">Add Square</button>
+    <button id="addCircle">Add Circle</button>
+    <button id="addTriangle">Add Triangle</button>`;
+
+    document.body.appendChild(shapePanel);
+
+    let isDraggingPanel = false;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    helpPanel.addEventListener("mousedown", function (e: any) {
+        if (e?.target?.id !== "closeHelp") {
+            isDraggingPanel = true;
+            dragOffsetX = e.clientX - helpPanel.offsetLeft;
+            dragOffsetY = e.clientY - helpPanel.offsetTop;
+        }
+    });
+
+    document.addEventListener("mousemove", function (e) {
+        if (isDraggingPanel) {
+            helpPanel.style.left = e.clientX - dragOffsetX + "px";
+            helpPanel.style.top = e.clientY - dragOffsetY + "px";
+            helpPanel.style.transform = "";
+        }
+    });
+
+    document.addEventListener("mouseup", function () {
+        isDraggingPanel = false;
+    });
+
+    const shapeList = document.getElementById("shapeList") as HTMLDivElement;
+    const addSquareBtn = document.getElementById("addSquare") as HTMLButtonElement;
+    const addCircleBtn = document.getElementById("addCircle") as HTMLButtonElement;
+    const addTriangleBtn = document.getElementById("addTriangle") as HTMLButtonElement;
+
+    const trianglePoints = new WeakMap<HTMLElement, { sourcePoints: Types.Point[]; targetPoints: Types.Point[] }>();
+    let dynamicShapes: Types.Shape[] = [];
+
+    // ---- SHAPE FUNCTIONS ----
+    function createShape(type: "square" | "circle" | "triangle"): void {
+        const div = document.createElement("div");
+        div.id = `shape_${Date.now()}`;
+
+        const [x, y] = utils.getFreePosition(100, 100);
+        div.style.position = "fixed";
+        div.style.top = y + "px";
+        div.style.left = x + "px";
+        div.style.width = "100px";
+        div.style.height = "100px";
+        div.style.background = type === "triangle" ? "transparent" : "white";
+        div.style.border = type === "triangle" ? "2px solid white" : "none";
+
+        if (type === "circle") div.style.borderRadius = "50%";
+        if (type === "triangle") {
+            div.style.width = "0";
+            div.style.height = "0";
+            div.style.borderLeft = "50px solid transparent";
+            div.style.borderRight = "50px solid transparent";
+            div.style.borderBottom = "100px solid white";
+
+            dymoMaptastic.addLayer(div,
+                utils.clonePoints([
+                    [50, 0],
+                    [100, 100],
+                    [0, 100],
+                    [50, 100]
+                ]
+            ));
+        }
+
+        document.body.appendChild(div);
+        dymoMaptastic.addLayer(div);
+        dynamicShapes.push({ id: div.id, type, x, y });
+        updateShapeList();
+        saveShapes();
+    };
+
+    function updateShapeList(): void {
+        shapeList.innerHTML = "";
+        dynamicShapes.forEach(s => {
+            const el = document.createElement("div");
+            el.style.display = "flex";
+            el.style.justifyContent = "space-between";
+            el.style.marginBottom = "4px";
+            el.innerHTML = `${s.type} <button data-id="${s.id}">Delete</button>`;
+            shapeList.appendChild(el);
+            el.querySelector("button")?.addEventListener("click", () => deleteShape(s.id));
+        });
+    }
+
+    function deleteShape(id: string): void {
+        const idx = dynamicShapes.findIndex(s => s.id === id);
+        if (idx !== -1) {
+            const layer = document.getElementById(id);
+            if (layer) layer.remove();
+            dynamicShapes.splice(idx, 1);
+            updateShapeList();
+            saveShapes();
+        }
+    }
+
+    function saveShapes(): void {
+        localStorage.setItem("dynamicShapes", JSON.stringify(dynamicShapes));
+    }
+
+    function loadShapes(): void {
+        const stored = localStorage.getItem("dynamicShapes");
+        if (stored) {
+            dynamicShapes = JSON.parse(stored) as Types.Shape[];
+            dynamicShapes.forEach(s => restoreShape(s));
+            updateShapeList();
+        }
+    }
+
+    function restoreShape(s: Types.Shape): void {
+        const div = document.createElement("div");
+        div.id = s.id;
+
+        const x = s.x ?? Math.random() * (window.innerWidth - 100);
+        const y = s.y ?? Math.random() * (window.innerHeight - 100);
+
+        div.style.position = "fixed";
+        div.style.top = y + "px";
+        div.style.left = x + "px";
+        div.style.width = "100px";
+        div.style.height = "100px";
+        div.style.background = s.type === "triangle" ? "transparent" : "white";
+        div.style.border = s.type === "triangle" ? "2px solid white" : "none";
+
+        if (s.type === "circle") div.style.borderRadius = "50%";
+        if (s.type === "triangle") {
+            div.style.width = "0";
+            div.style.height = "0";
+            div.style.borderLeft = "50px solid transparent";
+            div.style.borderRight = "50px solid transparent";
+            div.style.borderBottom = "100px solid white";
+        }
+
+        document.body.appendChild(div);
+        dymoMaptastic.addLayer(div);
+    }
+
+    // ---- LISTENERS ----
+    addSquareBtn.addEventListener("click", () => createShape("square"));
+    addCircleBtn.addEventListener("click", () => createShape("circle"));
+    addTriangleBtn.addEventListener("click", () => createShape("triangle"));
+
+    document.addEventListener("keydown", e => {
+        if (e.shiftKey && e.code === "Space") {
+            e.preventDefault();
+            helpPanel.style.display = helpPanel.style.display === "none" ? "block" : "none";
+            shapePanel.style.display = shapePanel.style.display === "none" ? "block" : "none";
+        }
+    });
+
+    // Override edit mode.
+    const originalSetConfigEnabled = dymoMaptastic.setConfigEnabled;
+    dymoMaptastic.setConfigEnabled = function (enabled: boolean) {
+        originalSetConfigEnabled(enabled);
+        shapePanel.style.display = enabled ? "block" : "none";
+    };
+
+    loadShapes();
+};
