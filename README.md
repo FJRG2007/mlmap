@@ -17,6 +17,9 @@
 
 Online tool for project mapping based on JavaScript executed on the client.
 
+> [!IMPORTANT]
+> The project is still in development, so there may be some bugs or errors.
+
 #### Author
  - FJRG007
  - Email: [fjrg2007@tpeoficial.com](mailto:fjrg2007@tpeoficial.com)
