@@ -798,6 +798,20 @@ export class MLMap {
             case 90: // z key
                 if (event.ctrlKey) this.undo();
                 break;
+
+            case 46: // Delete key
+            case 8:  // Backspace key
+                if (this.selectedLayer) {
+                    this.selectedLayer.element.remove();
+                    if (this.selectedLayer.overlay) this.selectedLayer.overlay.remove();
+                    const index = this.layers.indexOf(this.selectedLayer);
+                    if (index >= 0) this.layers.splice(index, 1);
+                    this.selectedLayer = null;
+                    dirty = true;
+                    this.updateTransform();
+                    this.draw();
+                }
+                break;
         }
 
         // If a layer or point is selected, add the delta amounts (set above via arrow keys).

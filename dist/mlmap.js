@@ -32,7 +32,7 @@
   }
 
   // src/lib/data.ts
-  var VERSION = "0.0.1.2";
+  var VERSION = "0.0.1.3";
 
   // src/uiControls/index.ts
   function initUIControls(dymoMaptastic2) {
@@ -61,6 +61,7 @@ ALT + Arrow keys:   rotate/scale selected quad
 'v':                Flip selected layer vertically
 'b':                Show/Hide projector bounds
 'l':                Show/Hide layer labels
+'\u232B'/'Del':         Delete selected layer
 
 MLMap | Version ${VERSION}
 </pre>
@@ -191,10 +192,10 @@ MLMap | Version ${VERSION}
       }
     }
     function saveShapes() {
-      localStorage.setItem("dynamicShapes", JSON.stringify(dynamicShapes));
+      localStorage.setItem("mlmap.dynamicShapes", JSON.stringify(dynamicShapes));
     }
     function loadShapes() {
-      const stored = localStorage.getItem("dynamicShapes");
+      const stored = localStorage.getItem("mlmap.dynamicShapes");
       if (stored) {
         dynamicShapes = JSON.parse(stored);
         dynamicShapes.forEach((s) => restoreShape(s));
@@ -240,6 +241,23 @@ MLMap | Version ${VERSION}
       shapePanel.style.display = enabled ? "block" : "none";
     };
     loadShapes();
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "childList" && mutation.removedNodes.length > 0) {
+          mutation.removedNodes.forEach((node) => {
+            if (node instanceof HTMLElement) {
+              const idx = dynamicShapes.findIndex((s) => s.id === node.id);
+              if (idx !== -1) {
+                dynamicShapes.splice(idx, 1);
+                updateShapeList();
+                saveShapes();
+              }
+            }
+          });
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   // src/main.ts
@@ -939,6 +957,20 @@ MLMap | Version ${VERSION}
           break;
         case 90:
           if (event.ctrlKey) this.undo();
+          break;
+        case 46:
+        // Delete key
+        case 8:
+          if (this.selectedLayer) {
+            this.selectedLayer.element.remove();
+            if (this.selectedLayer.overlay) this.selectedLayer.overlay.remove();
+            const index = this.layers.indexOf(this.selectedLayer);
+            if (index >= 0) this.layers.splice(index, 1);
+            this.selectedLayer = null;
+            dirty = true;
+            this.updateTransform();
+            this.draw();
+          }
           break;
       }
       if (!this.showScreenBounds) {

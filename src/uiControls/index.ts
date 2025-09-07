@@ -32,6 +32,7 @@ ALT + Arrow keys:   rotate/scale selected quad
 'v':                Flip selected layer vertically
 'b':                Show/Hide projector bounds
 'l':                Show/Hide layer labels
+'⌫'/'Del':         Delete selected layer
 
 MLMap | Version ${VERSION}
 </pre>
@@ -180,11 +181,11 @@ MLMap | Version ${VERSION}
     }
 
     function saveShapes(): void {
-        localStorage.setItem("dynamicShapes", JSON.stringify(dynamicShapes));
+        localStorage.setItem("mlmap.dynamicShapes", JSON.stringify(dynamicShapes));
     }
 
     function loadShapes(): void {
-        const stored = localStorage.getItem("dynamicShapes");
+        const stored = localStorage.getItem("mlmap.dynamicShapes");
         if (stored) {
             dynamicShapes = JSON.parse(stored) as Types.Shape[];
             dynamicShapes.forEach(s => restoreShape(s));
@@ -241,4 +242,23 @@ MLMap | Version ${VERSION}
     };
 
     loadShapes();
-};
+
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            if (mutation.type === "childList" && mutation.removedNodes.length > 0) {
+                mutation.removedNodes.forEach(node => {
+                    if (node instanceof HTMLElement) {
+                        const idx = dynamicShapes.findIndex(s => s.id === node.id);
+                        if (idx !== -1) {
+                            dynamicShapes.splice(idx, 1);
+                            updateShapeList();
+                            saveShapes();
+                        }
+                    }
+                });
+            }
+        }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+}
