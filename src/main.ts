@@ -558,7 +558,7 @@ export class MLMap {
             this.context.fillStyle = "white";
             this.context.font = "20px sans-serif";
             this.context.fillText(`${this.canvas.width} x ${this.canvas.height}`, this.canvas.width / 2, this.canvas.height / 2 + (fontSize * 0.75));
-            this.context.fillText("display size", this.canvas.width / 2, this.canvas.height / 2 - (fontSize * 0.75));
+            this.context.fillText("Display size", this.canvas.width / 2, this.canvas.height / 2 - (fontSize * 0.75));
         }
     };
 

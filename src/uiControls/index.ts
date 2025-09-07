@@ -5,7 +5,6 @@ import * as utils from "../utils/basics";
 import * as storage from "../utils/storage";
 
 export function initUIControls(baseMLMap: MLMap) {
-
     // ---- HELP PANEL ----
     const helpPanel = document.createElement("div");
     helpPanel.id = "controls";
@@ -175,7 +174,7 @@ MLMap | Version ${VERSION}
                     [0, 100],
                     [50, 100]
                 ]
-                ));
+            ));
         }
 
         document.body.appendChild(div);

@@ -1,8 +1,7 @@
 import { Workspace } from "../types";
 
 export function saveWorkspace(workspace: Workspace) {
-    const cacheKey = `mlmap:workspace<${workspace.id}>`;
-    localStorage.setItem(cacheKey, JSON.stringify(workspace));
+    localStorage.setItem(`mlmap:workspace<${workspace.id}>`, JSON.stringify(workspace));
 };
 
 export function loadWorkspace(workspaceId?: string): Workspace | null {
@@ -24,14 +23,12 @@ export function loadWorkspace(workspaceId?: string): Workspace | null {
         return defaultWorkspace;
     }
 
-    const cacheKey = `mlmap:workspace<${workspaceId || currentWorkspaceId}>`;
-    const raw = localStorage.getItem(cacheKey);
+    const raw = localStorage.getItem(`mlmap:workspace<${workspaceId || currentWorkspaceId}>`);
     return raw ? JSON.parse(raw) as Workspace : null;
 };
 
 export function deleteWorkspace(workspaceId: string) {
-    const cacheKey = `mlmap:workspace<${workspaceId}>`;
-    localStorage.removeItem(cacheKey);
+    localStorage.removeItem(`mlmap:workspace<${workspaceId}>`);
 };
 
 export function resetWorkspace(workspaceId: string) {
