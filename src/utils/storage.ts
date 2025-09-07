@@ -34,6 +34,17 @@ export function deleteWorkspace(workspaceId: string) {
     localStorage.removeItem(cacheKey);
 };
 
+export function resetWorkspace(workspaceId: string) {
+    const cacheKey = `mlmap:workspace<${workspaceId}>`;
+    const currentData = JSON.parse(localStorage.getItem(cacheKey) || `{id:"${workspaceId}",name:"Reset Workspace",version:"1.0",layout:{}`);
+    localStorage.setItem(cacheKey, JSON.stringify({
+        id: workspaceId,
+        name: currentData?.name,
+        version: "1.0",
+        layout: {}
+    }));
+};
+
 export function loadAllWorkspaces(): Workspace[] {
     const workspaces: Workspace[] = [];
     for (let i = 0; i < localStorage.length; i++) {

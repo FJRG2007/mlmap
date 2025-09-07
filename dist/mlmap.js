@@ -58,6 +58,16 @@
     const cacheKey = `mlmap:workspace<${workspaceId}>`;
     localStorage.removeItem(cacheKey);
   }
+  function resetWorkspace(workspaceId) {
+    const cacheKey = `mlmap:workspace<${workspaceId}>`;
+    const currentData = JSON.parse(localStorage.getItem(cacheKey) || `{id:"${workspaceId}",name:"Reset Workspace",version:"1.0",layout:{}`);
+    localStorage.setItem(cacheKey, JSON.stringify({
+      id: workspaceId,
+      name: currentData?.name,
+      version: "1.0",
+      layout: {}
+    }));
+  }
   function loadAllWorkspaces() {
     const workspaces = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -138,42 +148,59 @@ MLMap | Version ${VERSION}
       padding: "10px",
       border: "2px solid #808080",
       zIndex: "1000002",
-      display: "none"
+      cursor: "move",
+      display: "none",
+      userSelect: "none"
     });
     shapePanel.innerHTML = `
     <strong>Shapes</strong>
     <div id="shapeList"></div>
-    <button id="addSquare">Add Square</button>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 5px;">
+        <button id="addSquare">Add Square</button>
     <button id="addCircle">Add Circle</button>
     <button id="addTriangle">Add Triangle</button>
+    </div>
     <hr>
     <strong>Workspaces</strong>
     <select id="workspaceSelector" style="width:100%;margin-top:5px;"></select>
-    <div style="display:flex;gap:4px;margin-top:5px;">
-      <button id="addWorkspace">New</button>
-      <button id="renameWorkspace">Rename</button>
-      <button id="deleteWorkspace">Delete</button>
-    </div>`;
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 5px;">
+        <button id="addWorkspace">New</button>
+        <button id="renameWorkspace">Rename</button>
+        <button id="resetWorkspace">Reset</button>
+        <button id="deleteWorkspace">Delete</button>
+    </div>
+    `;
     document.body.appendChild(shapePanel);
-    let isDraggingPanel = false;
+    let isDraggingHelpPanel = false, isDraggingSettingsPanel = false;
     let dragOffsetX = 0;
     let dragOffsetY = 0;
     helpPanel.addEventListener("mousedown", function(e) {
       if (e?.target?.id !== "closeHelp") {
-        isDraggingPanel = true;
+        isDraggingHelpPanel = true;
         dragOffsetX = e.clientX - helpPanel.offsetLeft;
         dragOffsetY = e.clientY - helpPanel.offsetTop;
       }
     });
+    shapePanel.addEventListener("mousedown", function(e) {
+      isDraggingSettingsPanel = true;
+      dragOffsetX = e.clientX - shapePanel.offsetLeft;
+      dragOffsetY = e.clientY - shapePanel.offsetTop;
+    });
     document.addEventListener("mousemove", function(e) {
-      if (isDraggingPanel) {
+      if (isDraggingHelpPanel) {
         helpPanel.style.left = e.clientX - dragOffsetX + "px";
         helpPanel.style.top = e.clientY - dragOffsetY + "px";
         helpPanel.style.transform = "";
       }
+      if (isDraggingSettingsPanel) {
+        shapePanel.style.left = e.clientX - dragOffsetX + "px";
+        shapePanel.style.top = e.clientY - dragOffsetY + "px";
+        shapePanel.style.transform = "";
+      }
     });
     document.addEventListener("mouseup", function() {
-      isDraggingPanel = false;
+      isDraggingHelpPanel = false;
+      isDraggingSettingsPanel = false;
     });
     const shapeList = document.getElementById("shapeList");
     const addSquareBtn = document.getElementById("addSquare");
@@ -344,6 +371,12 @@ MLMap | Version ${VERSION}
       const name = prompt("New name:", activeWorkspace.name) || activeWorkspace.name;
       activeWorkspace.name = name;
       saveWorkspace(activeWorkspace);
+      updateWorkspaceSelector();
+    });
+    document.getElementById("resetWorkspace")?.addEventListener("click", () => {
+      if (!activeWorkspace) return;
+      resetWorkspace(activeWorkspace.id);
+      window.location.reload();
       updateWorkspaceSelector();
     });
     document.getElementById("deleteWorkspace")?.addEventListener("click", () => {
