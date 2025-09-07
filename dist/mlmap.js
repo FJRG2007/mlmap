@@ -31,6 +31,9 @@
     return Math.hypot(x2 - x1, y2 - y1);
   }
 
+  // src/lib/data.ts
+  var VERSION = "0.0.1.2";
+
   // src/uiControls/index.ts
   function initUIControls(dymoMaptastic2) {
     const helpPanel = document.createElement("div");
@@ -57,6 +60,9 @@ ALT + Arrow keys:   rotate/scale selected quad
 'h':                Flip selected layer horizontally
 'v':                Flip selected layer vertically
 'b':                Show/Hide projector bounds
+'l':                Show/Hide layer labels
+
+MLMap | Version ${VERSION}
 </pre>
     `;
     Object.assign(helpPanel.style, {
@@ -879,6 +885,11 @@ ALT + Arrow keys:   rotate/scale selected quad
           break;
         case 67:
           this.showCrosshairs = !this.showCrosshairs;
+          dirty = true;
+          break;
+        case 76:
+          if (!this.configActive) return;
+          this.showLayerNames = !this.showLayerNames;
           dirty = true;
           break;
         case 83:

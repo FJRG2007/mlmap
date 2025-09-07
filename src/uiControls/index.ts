@@ -31,6 +31,7 @@ ALT + Arrow keys:   rotate/scale selected quad
 'h':                Flip selected layer horizontally
 'v':                Flip selected layer vertically
 'b':                Show/Hide projector bounds
+'l':                Show/Hide layer labels
 
 MLMap | Version ${VERSION}
 </pre>

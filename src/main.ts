@@ -736,6 +736,12 @@ export class MLMap {
                 this.showCrosshairs = !this.showCrosshairs;
                 dirty = true;
                 break;
+            
+            case 76: // l key, toggle layer names.
+                if (!this.configActive) return;
+                this.showLayerNames = !this.showLayerNames;
+                dirty = true;
+                break;
 
             case 83: // s key, solo/unsolo quads.
                 if (!this.isLayerSoloed) {
