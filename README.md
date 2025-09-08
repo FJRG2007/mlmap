@@ -55,6 +55,23 @@ When you include `mlmap.min.js` in your page, a new class named `MLMap` is defin
 </html>
 ```
 
+<details>
+<summary>Add new layers to an existing MLMap instance</summary>
+
+```js
+const mlmap = new MLMap({
+  layers: ["so-simple"]
+});
+
+mlmap.addLayer("so-simple-2");
+```
+</details>
+
+## Controls
+Since the idea is to have a projector aimed all crazy-like, the controls are all keyboard and mouse based since any UI would either get in the way, or would be impossible to see in most cases anyway.
+
+`SHIFT` + `Space` Toggle edit mode and discover the rest of the controls
+
 #### Author
  - FJRG007
  - Email: [fjrg2007@tpeoficial.com](mailto:fjrg2007@tpeoficial.com)
