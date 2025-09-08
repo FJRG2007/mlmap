@@ -6,7 +6,9 @@
   <a href="https://ko-fi.com/fjrg2007"> <img alt="Kofi" src="https://img.shields.io/badge/Ko--fi-purple?style=for-the-badge&logo=ko-fi&logoColor=white"></a>
   <br />
   <br />
-  <a href="https://github.com/FJRG2007/mlmap/tree/main/demo">Demos</a>
+  <a href="https://fjrg2007.github.io/mlmap/demo/">Demo</a>
+  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+  <a href="https://fjrg2007.github.io/mlmap/examples/three-js-demo">Example with Three.js</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://tpe.li/dsc">Discord</a>
   <br />
