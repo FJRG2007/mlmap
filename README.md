@@ -24,7 +24,7 @@ Online tool for project mapping based on JavaScript executed on the client.
 
 ### Usage:
 
-When you include `mlmap.min.js` in your page, a new class named `MLMap` is defined. The first step is to instantiate Maptastic, which can be done a couple of different ways depending on your needs. For most simple cases, this only requires a _single line of code_.
+When you include `mlmap.min.js` in your page, a new class named `MLMap` is defined. The first step is to instantiate MLMap, which can be done a couple of different ways depending on your needs. For most simple cases, this only requires a _single line of code_.
 
 [SHOW ME THE DEMO](https://fjrg2007.github.io/mlmap/demo/)
 
