@@ -30,11 +30,123 @@
   function distanceTo(x1, y1, x2, y2) {
     return Math.hypot(x2 - x1, y2 - y1);
   }
+  var solve = /* @__PURE__ */ (() => {
+    function r(t, nArr, o, eFunc) {
+      if (o === nArr.length - 1) return eFunc(t);
+      let f;
+      const u = nArr[o];
+      const cArr = Array(u);
+      for (f = u - 1; f >= 0; --f) cArr[f] = r(t[f], nArr, o + 1, eFunc);
+      return cArr;
+    }
+    ;
+    function tfn(rObj) {
+      const res = [];
+      while (typeof rObj === "object") {
+        res.push(rObj.length);
+        rObj = rObj[0];
+      }
+      return res;
+    }
+    ;
+    function nfn(rObj) {
+      let n, o;
+      if (typeof rObj === "object") {
+        n = rObj[0];
+        if (typeof n === "object") {
+          o = n[0];
+          return typeof o === "object" ? tfn(rObj) : [rObj.length, n.length];
+        }
+        return [rObj.length];
+      }
+      return [];
+    }
+    ;
+    function ofn(rArr) {
+      let i;
+      const n = rArr.length;
+      const out = Array(n);
+      for (i = n - 1; i >= 0; --i) out[i] = rArr[i];
+      return out;
+    }
+    ;
+    function efn(tVal) {
+      return typeof tVal !== "object" ? tVal : r(tVal, nfn(tVal), 0, ofn);
+    }
+    ;
+    function ffn(rArr, tFlag) {
+      tFlag = tFlag || false;
+      let n, o, fVar, uVar, a, h, i, l, g;
+      let v = rArr.length;
+      const y = v - 1;
+      const b = new Array(v);
+      if (!tFlag) rArr = efn(rArr);
+      for (fVar = 0; fVar < v; ++fVar) {
+        i = fVar;
+        h = rArr[fVar];
+        g = c(h[fVar]);
+        for (o = fVar + 1; o < v; ++o) {
+          uVar = c(rArr[o][fVar]);
+          if (uVar > g) {
+            g = uVar;
+            i = o;
+          }
+        }
+        b[fVar] = i;
+        if (i != fVar) {
+          rArr[fVar] = rArr[i];
+          rArr[i] = h;
+          h = rArr[fVar];
+        }
+        a = h[fVar];
+        for (n = fVar + 1; n < v; ++n) rArr[n][fVar] /= a;
+        for (n = fVar + 1; n < v; ++n) {
+          l = rArr[n];
+          for (o = fVar + 1; o < y; ++o) {
+            l[o] -= l[fVar] * h[o];
+            ++o;
+            l[o] -= l[fVar] * h[o];
+          }
+          if (o === y) l[o] -= l[fVar] * h[o];
+        }
+      }
+      return { LU: rArr, P: b };
+    }
+    ;
+    function ufn(rObj, tArr) {
+      let n, o, fVar, uVar, cVar;
+      const a = rObj.LU;
+      const h = a.length;
+      const iArr = efn(tArr);
+      const lArr = rObj.P;
+      for (n = h - 1; n >= 0; --n) iArr[n] = tArr[n];
+      for (n = 0; n < h; ++n) {
+        fVar = lArr[n];
+        if (lArr[n] !== n) {
+          cVar = iArr[n];
+          iArr[n] = iArr[fVar];
+          iArr[fVar] = cVar;
+        }
+        uVar = a[n];
+        for (o = 0; o < n; ++o) iArr[n] -= iArr[o] * uVar[o];
+      }
+      for (n = h - 1; n >= 0; --n) {
+        uVar = a[n];
+        for (o = n + 1; o < h; ++o) iArr[n] -= iArr[o] * uVar[o];
+        iArr[n] /= uVar[n];
+      }
+      return iArr;
+    }
+    ;
+    const c = Math.abs;
+    return function(rMat, bVec, nOpt) {
+      return ufn(ffn(rMat, nOpt), bVec);
+    };
+  })();
 
   // src/utils/storage.ts
   function saveWorkspace(workspace) {
-    const cacheKey = `mlmap:workspace<${workspace.id}>`;
-    localStorage.setItem(cacheKey, JSON.stringify(workspace));
+    localStorage.setItem(`mlmap:workspace<${workspace.id}>`, JSON.stringify(workspace));
   }
   function loadWorkspace(workspaceId) {
     let currentWorkspaceId = localStorage.getItem("mlmap:currentWorkspaceId");
@@ -50,13 +162,11 @@
       localStorage.setItem(`mlmap:workspace<${currentWorkspaceId}>`, JSON.stringify(defaultWorkspace));
       return defaultWorkspace;
     }
-    const cacheKey = `mlmap:workspace<${workspaceId || currentWorkspaceId}>`;
-    const raw = localStorage.getItem(cacheKey);
+    const raw = localStorage.getItem(`mlmap:workspace<${workspaceId || currentWorkspaceId}>`);
     return raw ? JSON.parse(raw) : null;
   }
   function deleteWorkspace(workspaceId) {
-    const cacheKey = `mlmap:workspace<${workspaceId}>`;
-    localStorage.removeItem(cacheKey);
+    localStorage.removeItem(`mlmap:workspace<${workspaceId}>`);
   }
   function resetWorkspace(workspaceId) {
     const cacheKey = `mlmap:workspace<${workspaceId}>`;
@@ -81,10 +191,12 @@
   }
 
   // src/lib/data.ts
-  var VERSION = "0.0.2.0";
+  var VERSION = "0.0.2.3";
+  var historyStack = [];
+  var historyLimit = 50;
 
   // src/uiControls/index.ts
-  function initUIControls(baseMLMap) {
+  function initUIControls(baseMLMap2) {
     const helpPanel = document.createElement("div");
     helpPanel.id = "controls";
     helpPanel.innerHTML = `
@@ -157,17 +269,18 @@ MLMap | Version ${VERSION}
     <div id="shapeList"></div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 5px;">
         <button id="addSquare">Add Square</button>
-    <button id="addCircle">Add Circle</button>
-    <button id="addTriangle">Add Triangle</button>
+        <button id="addCircle">Add Circle</button>
+        <button id="addTriangle">Add Triangle</button>
     </div>
     <hr>
     <strong>Workspaces</strong>
     <select id="workspaceSelector" style="width:100%;margin-top:5px;"></select>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 5px;">
-        <button id="addWorkspace">New</button>
-        <button id="renameWorkspace">Rename</button>
-        <button id="resetWorkspace">Reset</button>
-        <button id="deleteWorkspace">Delete</button>
+        <button id="addWorkspace" title="Add Workspace" aria-label="Add Workspace">\u{1F195}</button>
+        <button id="duplicateWorkspace" title="Duplicate Workspace" aria-label="Duplicate Workspace">\u{1F4CB}</button>
+        <button id="renameWorkspace" title="Rename Workspace" aria-label="Rename Workspace">\u270F\uFE0F</button>
+        <button id="resetWorkspace" title="Reset Workspace" aria-label="Reset Workspace">\u{1F9F9}</button>
+        <button id="deleteWorkspace" title="Delete Workspace" aria-label="Delete Workspace">\u{1F5D1}\uFE0F</button>
     </div>
     `;
     document.body.appendChild(shapePanel);
@@ -226,7 +339,7 @@ MLMap | Version ${VERSION}
         div.style.borderLeft = "50px solid transparent";
         div.style.borderRight = "50px solid transparent";
         div.style.borderBottom = "100px solid white";
-        baseMLMap.addLayer(
+        baseMLMap2.addLayer(
           div,
           clonePoints(
             [
@@ -239,7 +352,7 @@ MLMap | Version ${VERSION}
         );
       }
       document.body.appendChild(div);
-      baseMLMap.addLayer(div);
+      baseMLMap2.addLayer(div);
       dynamicShapes.push({ id: div.id, type, x, y });
       updateShapeList();
       saveShapes();
@@ -257,6 +370,7 @@ MLMap | Version ${VERSION}
         el.querySelector("button")?.addEventListener("click", () => deleteShape(s.id));
       });
     }
+    ;
     function deleteShape(id) {
       const idx = dynamicShapes.findIndex((s) => s.id === id);
       if (idx !== -1) {
@@ -267,9 +381,11 @@ MLMap | Version ${VERSION}
         saveShapes();
       }
     }
+    ;
     function saveShapes() {
       localStorage.setItem("mlmap.dynamicShapes", JSON.stringify(dynamicShapes));
     }
+    ;
     function loadShapes() {
       const stored = localStorage.getItem("mlmap.dynamicShapes");
       if (stored) {
@@ -278,6 +394,7 @@ MLMap | Version ${VERSION}
         updateShapeList();
       }
     }
+    ;
     function restoreShape(s) {
       const div = document.createElement("div");
       div.id = s.id;
@@ -299,8 +416,9 @@ MLMap | Version ${VERSION}
         div.style.borderBottom = "100px solid white";
       }
       document.body.appendChild(div);
-      baseMLMap.addLayer(div);
+      baseMLMap2.addLayer(div);
     }
+    ;
     addSquareBtn.addEventListener("click", () => createShape("square"));
     addCircleBtn.addEventListener("click", () => createShape("circle"));
     addTriangleBtn.addEventListener("click", () => createShape("triangle"));
@@ -311,8 +429,8 @@ MLMap | Version ${VERSION}
         shapePanel.style.display = shapePanel.style.display === "none" ? "block" : "none";
       }
     });
-    const originalSetConfigEnabled = baseMLMap.setConfigEnabled;
-    baseMLMap.setConfigEnabled = function(enabled) {
+    const originalSetConfigEnabled = baseMLMap2.setConfigEnabled;
+    baseMLMap2.setConfigEnabled = function(enabled) {
       originalSetConfigEnabled(enabled);
       shapePanel.style.display = enabled ? "block" : "none";
     };
@@ -341,7 +459,7 @@ MLMap | Version ${VERSION}
       activeWorkspace = workspaces[0];
       localStorage.setItem("mlmap:currentWorkspaceId", activeWorkspace.id);
     }
-    if (activeWorkspace) baseMLMap.setLayout(activeWorkspace.layout);
+    if (activeWorkspace) baseMLMap2.setLayout(activeWorkspace.layout);
     if (workspaces.length === 1) document.getElementById("deleteWorkspace").disabled = true;
     function updateWorkspaceSelector() {
       workspaceSelector.innerHTML = "";
@@ -366,6 +484,15 @@ MLMap | Version ${VERSION}
       saveWorkspace(ws);
       setActiveWorkspace(ws);
     });
+    document.getElementById("duplicateWorkspace")?.addEventListener("click", () => {
+      if (!activeWorkspace) return;
+      const name = prompt("New name:", activeWorkspace.name + " (Copy)") || activeWorkspace.name + " (Copy)";
+      const ws = { id: Date.now().toString(), name, version: "1.0", layout: {} };
+      workspaces.push(ws);
+      saveWorkspace(ws);
+      setActiveWorkspace(ws);
+      updateWorkspaceSelector();
+    });
     document.getElementById("renameWorkspace")?.addEventListener("click", () => {
       if (!activeWorkspace) return;
       const name = prompt("New name:", activeWorkspace.name) || activeWorkspace.name;
@@ -385,7 +512,7 @@ MLMap | Version ${VERSION}
       deleteWorkspace(activeWorkspace.id);
       workspaces = workspaces.filter((ws) => ws.id !== activeWorkspace?.id);
       activeWorkspace = workspaces[0] || null;
-      if (activeWorkspace) baseMLMap.setLayout(activeWorkspace.layout);
+      if (activeWorkspace) baseMLMap2.setLayout(activeWorkspace.layout);
       updateWorkspaceSelector();
     });
     workspaceSelector.addEventListener("change", () => {
@@ -393,123 +520,15 @@ MLMap | Version ${VERSION}
       if (ws) setActiveWorkspace(ws);
     });
     updateWorkspaceSelector();
-    baseMLMap.layoutChangeListener = () => {
+    baseMLMap2.layoutChangeListener = () => {
       if (activeWorkspace) {
-        activeWorkspace.layout = baseMLMap.getLayout();
+        activeWorkspace.layout = baseMLMap2.getLayout();
         saveWorkspace(activeWorkspace);
       }
     };
   }
 
   // src/main.ts
-  var solve = /* @__PURE__ */ (() => {
-    function r(t, nArr, o, eFunc) {
-      if (o === nArr.length - 1) return eFunc(t);
-      let f;
-      const u = nArr[o];
-      const cArr = Array(u);
-      for (f = u - 1; f >= 0; --f) cArr[f] = r(t[f], nArr, o + 1, eFunc);
-      return cArr;
-    }
-    function tfn(rObj) {
-      const res = [];
-      while (typeof rObj === "object") {
-        res.push(rObj.length);
-        rObj = rObj[0];
-      }
-      return res;
-    }
-    function nfn(rObj) {
-      let n, o;
-      if (typeof rObj === "object") {
-        n = rObj[0];
-        if (typeof n === "object") {
-          o = n[0];
-          return typeof o === "object" ? tfn(rObj) : [rObj.length, n.length];
-        }
-        return [rObj.length];
-      }
-      return [];
-    }
-    function ofn(rArr) {
-      let i;
-      const n = rArr.length;
-      const out = Array(n);
-      for (i = n - 1; i >= 0; --i) out[i] = rArr[i];
-      return out;
-    }
-    function efn(tVal) {
-      return typeof tVal !== "object" ? tVal : r(tVal, nfn(tVal), 0, ofn);
-    }
-    function ffn(rArr, tFlag) {
-      tFlag = tFlag || false;
-      let n, o, fVar, uVar, a, h, i, l, g;
-      let v = rArr.length;
-      const y = v - 1;
-      const b = new Array(v);
-      if (!tFlag) rArr = efn(rArr);
-      for (fVar = 0; fVar < v; ++fVar) {
-        i = fVar;
-        h = rArr[fVar];
-        g = c(h[fVar]);
-        for (o = fVar + 1; o < v; ++o) {
-          uVar = c(rArr[o][fVar]);
-          if (uVar > g) {
-            g = uVar;
-            i = o;
-          }
-        }
-        b[fVar] = i;
-        if (i != fVar) {
-          rArr[fVar] = rArr[i];
-          rArr[i] = h;
-          h = rArr[fVar];
-        }
-        a = h[fVar];
-        for (n = fVar + 1; n < v; ++n) rArr[n][fVar] /= a;
-        for (n = fVar + 1; n < v; ++n) {
-          l = rArr[n];
-          for (o = fVar + 1; o < y; ++o) {
-            l[o] -= l[fVar] * h[o];
-            ++o;
-            l[o] -= l[fVar] * h[o];
-          }
-          if (o === y) l[o] -= l[fVar] * h[o];
-        }
-      }
-      return { LU: rArr, P: b };
-    }
-    function ufn(rObj, tArr) {
-      let n, o, fVar, uVar, cVar;
-      const a = rObj.LU;
-      const h = a.length;
-      const iArr = efn(tArr);
-      const lArr = rObj.P;
-      for (n = h - 1; n >= 0; --n) iArr[n] = tArr[n];
-      for (n = 0; n < h; ++n) {
-        fVar = lArr[n];
-        if (lArr[n] !== n) {
-          cVar = iArr[n];
-          iArr[n] = iArr[fVar];
-          iArr[fVar] = cVar;
-        }
-        uVar = a[n];
-        for (o = 0; o < n; ++o) iArr[n] -= iArr[o] * uVar[o];
-      }
-      for (n = h - 1; n >= 0; --n) {
-        uVar = a[n];
-        for (o = n + 1; o < h; ++o) iArr[n] -= iArr[o] * uVar[o];
-        iArr[n] /= uVar[n];
-      }
-      return iArr;
-    }
-    const c = Math.abs;
-    return function(rMat, bVec, nOpt) {
-      return ufn(ffn(rMat, nOpt), bVec);
-    };
-  })();
-  var historyStack = [];
-  var historyLimit = 50;
   var MLMap = class {
     constructor(config = {}) {
       this.layers = [];
@@ -786,8 +805,8 @@ MLMap | Version ${VERSION}
         if (!exists) {
           var element = document.getElementById(layout[i].id);
           if (element) this.addLayer(element, layout[i].targetPoints);
-          else console.log(`Maptastic: Can"t find element: ` + layout[i].id);
-        } else console.log(`Maptastic: Element "" + layout[i].id + "" is already mapped.`);
+          else console.log(`MLMap: Can"t find element: ` + layout[i].id);
+        } else console.log(`MLMap: Element "" + layout[i].id + "" is already mapped.`);
       }
       this.updateTransform();
       this.draw();
@@ -903,7 +922,7 @@ MLMap | Version ${VERSION}
         this.context.fillStyle = "white";
         this.context.font = "20px sans-serif";
         this.context.fillText(`${this.canvas.width} x ${this.canvas.height}`, this.canvas.width / 2, this.canvas.height / 2 + fontSize * 0.75);
-        this.context.fillText("display size", this.canvas.width / 2, this.canvas.height / 2 - fontSize * 0.75);
+        this.context.fillText("Display size", this.canvas.width / 2, this.canvas.height / 2 - fontSize * 0.75);
       }
     }
     mouseMove(event) {
@@ -1139,8 +1158,8 @@ MLMap | Version ${VERSION}
       }
     }
   };
-  var dymoMaptastic = new MLMap({ layers: [] });
-  initUIControls(dymoMaptastic);
+  var baseMLMap = new MLMap({ layers: [] });
+  initUIControls(baseMLMap);
   window.MLMap = MLMap;
 })();
 //# sourceMappingURL=mlmap.js.map

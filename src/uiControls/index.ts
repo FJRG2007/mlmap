@@ -85,17 +85,18 @@ MLMap | Version ${VERSION}
     <div id="shapeList"></div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 5px;">
         <button id="addSquare">Add Square</button>
-    <button id="addCircle">Add Circle</button>
-    <button id="addTriangle">Add Triangle</button>
+        <button id="addCircle">Add Circle</button>
+        <button id="addTriangle">Add Triangle</button>
     </div>
     <hr>
     <strong>Workspaces</strong>
     <select id="workspaceSelector" style="width:100%;margin-top:5px;"></select>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 5px;">
-        <button id="addWorkspace">New</button>
-        <button id="renameWorkspace">Rename</button>
-        <button id="resetWorkspace">Reset</button>
-        <button id="deleteWorkspace">Delete</button>
+        <button id="addWorkspace" title="Add Workspace" aria-label="Add Workspace">🆕</button>
+        <button id="duplicateWorkspace" title="Duplicate Workspace" aria-label="Duplicate Workspace">📋</button>
+        <button id="renameWorkspace" title="Rename Workspace" aria-label="Rename Workspace">✏️</button>
+        <button id="resetWorkspace" title="Reset Workspace" aria-label="Reset Workspace">🧹</button>
+        <button id="deleteWorkspace" title="Delete Workspace" aria-label="Delete Workspace">🗑️</button>
     </div>
     `;
 
@@ -195,7 +196,7 @@ MLMap | Version ${VERSION}
             shapeList.appendChild(el);
             el.querySelector("button")?.addEventListener("click", () => deleteShape(s.id));
         });
-    }
+    };
 
     function deleteShape(id: string): void {
         const idx = dynamicShapes.findIndex(s => s.id === id);
@@ -206,11 +207,11 @@ MLMap | Version ${VERSION}
             updateShapeList();
             saveShapes();
         }
-    }
+    };
 
     function saveShapes(): void {
         localStorage.setItem("mlmap.dynamicShapes", JSON.stringify(dynamicShapes));
-    }
+    };
 
     function loadShapes(): void {
         const stored = localStorage.getItem("mlmap.dynamicShapes");
@@ -219,7 +220,7 @@ MLMap | Version ${VERSION}
             dynamicShapes.forEach(s => restoreShape(s));
             updateShapeList();
         }
-    }
+    };
 
     function restoreShape(s: Types.Shape): void {
         const div = document.createElement("div");
@@ -247,7 +248,7 @@ MLMap | Version ${VERSION}
 
         document.body.appendChild(div);
         baseMLMap.addLayer(div);
-    }
+    };
 
     // ---- LISTENERS ----
     addSquareBtn.addEventListener("click", () => createShape("square"));
@@ -326,6 +327,15 @@ MLMap | Version ${VERSION}
         workspaces.push(ws);
         storage.saveWorkspace(ws);
         setActiveWorkspace(ws);
+    });
+    document.getElementById("duplicateWorkspace")?.addEventListener("click", () => {
+        if (!activeWorkspace) return;
+        const name = prompt("New name:", activeWorkspace.name + " (Copy)") || activeWorkspace.name + " (Copy)";
+        const ws: Types.Workspace = { id: Date.now().toString(), name, version: "1.0", layout: {} };
+        workspaces.push(ws);
+        storage.saveWorkspace(ws);
+        setActiveWorkspace(ws);
+        updateWorkspaceSelector();
     });
     document.getElementById("renameWorkspace")?.addEventListener("click", () => {
         if (!activeWorkspace) return;
