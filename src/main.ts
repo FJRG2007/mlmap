@@ -1,3 +1,4 @@
+import "./events";
 import * as Types from "./types";
 import * as utils from "./utils/basics";
 import * as storage from "./utils/storage";

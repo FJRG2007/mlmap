@@ -3,11 +3,14 @@ import * as Types from "../types";
 import { VERSION } from "../lib/data";
 import * as utils from "../utils/basics";
 import * as storage from "../utils/storage";
+import { checkLatestVersion } from "../utils/remote";
 
 export function initUIControls(baseMLMap: MLMap) {
     // ---- HELP PANEL ----
     const helpPanel = document.createElement("div");
     helpPanel.id = "controls";
+
+    let latestVersion: string = VERSION;
 
     helpPanel.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -34,7 +37,7 @@ ALT + Arrow keys:   rotate/scale selected quad
 'l':                Show/Hide layer labels
 '⌫'/'Del':         Delete selected layer
 
-MLMap | Version ${VERSION}
+MLMap | v${VERSION} ${latestVersion !== VERSION ? ` (update to v${latestVersion})` : ""}
 </pre>
     `;
 
@@ -56,6 +59,15 @@ MLMap | Version ${VERSION}
     });
 
     document.body.appendChild(helpPanel);
+
+    checkLatestVersion().then(v => {
+        if (v.latest !== VERSION) {
+            const pre = helpPanel.querySelector("pre");
+            if (pre) {
+                pre.innerHTML = pre.innerHTML.replace(`v${VERSION}`, `v${VERSION} (update to v${v.latest})`);
+            }
+        }
+    });
 
     document.getElementById("closeHelp")?.addEventListener("click", () => {
         helpPanel.style.display = "none";

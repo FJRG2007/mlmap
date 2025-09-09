@@ -1,5 +1,105 @@
 "use strict";
 (() => {
+  var __create = Object.create;
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
+
+  // src/lib/data.ts
+  var VERSION, historyStack, historyLimit;
+  var init_data = __esm({
+    "src/lib/data.ts"() {
+      "use strict";
+      VERSION = "0.0.2.5";
+      historyStack = [];
+      historyLimit = 50;
+    }
+  });
+
+  // src/utils/remote.ts
+  async function checkLatestVersion() {
+    const CACHE_KEY = "mlmap:cache:checkLatestVersion";
+    const CACHE_DURATION = 5 * 60 * 1e3;
+    const now = Date.now();
+    const cachedString = localStorage.getItem(CACHE_KEY);
+    let cachedData = null;
+    if (cachedString) try {
+      cachedData = JSON.parse(cachedString);
+    } catch {
+    }
+    ;
+    if (cachedData && now - cachedData.timestamp < CACHE_DURATION) return { current: VERSION, latest: cachedData.latest, requireUpdate: cachedData.latest !== VERSION };
+    const controller = new AbortController();
+    const timeout = 5e3;
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch("https://raw.githubusercontent.com/FJRG2007/mlmap/refs/heads/main/package.json", { signal: controller.signal });
+      clearTimeout(timeoutId);
+      const data = await response.json();
+      cachedData = { latest: data.version, timestamp: now };
+      localStorage.setItem(CACHE_KEY, JSON.stringify(cachedData));
+      return { current: VERSION, latest: data.version, requireUpdate: data.version !== VERSION };
+    } catch {
+      return { current: VERSION, latest: cachedData?.latest || VERSION, requireUpdate: false };
+    }
+    ;
+  }
+  var init_remote = __esm({
+    "src/utils/remote.ts"() {
+      "use strict";
+      init_data();
+    }
+  });
+
+  // src/events/listeners.ts
+  var require_listeners = __commonJS({
+    "src/events/listeners.ts"() {
+      "use strict";
+      init_remote();
+      document.addEventListener("DOMContentLoaded", async () => {
+        const versionInfo = await checkLatestVersion();
+        console.log(`Current version: ${versionInfo.current}`);
+        console.log(`Latest version: ${versionInfo.latest}`);
+        if (versionInfo.requireUpdate) console.log("A new version is available!");
+      });
+    }
+  });
+
+  // src/events/index.ts
+  var require_events = __commonJS({
+    "src/events/index.ts"() {
+      "use strict";
+      var import_listeners = __toESM(require_listeners());
+    }
+  });
+
+  // src/main.ts
+  var import_events = __toESM(require_events());
+
   // src/utils/basics.ts
   function getFreePosition(width, height, layers = []) {
     let x = 0, y = 0, tries = 0, maxTries = 100;
@@ -190,15 +290,13 @@
     return workspaces;
   }
 
-  // src/lib/data.ts
-  var VERSION = "0.0.2.3";
-  var historyStack = [];
-  var historyLimit = 50;
-
   // src/uiControls/index.ts
+  init_data();
+  init_remote();
   function initUIControls(baseMLMap2) {
     const helpPanel = document.createElement("div");
     helpPanel.id = "controls";
+    let latestVersion = VERSION;
     helpPanel.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center;">
   <strong>Controls</strong>
@@ -224,7 +322,7 @@ ALT + Arrow keys:   rotate/scale selected quad
 'l':                Show/Hide layer labels
 '\u232B'/'Del':         Delete selected layer
 
-MLMap | Version ${VERSION}
+MLMap | v${VERSION} ${latestVersion !== VERSION ? ` (update to v${latestVersion})` : ""}
 </pre>
     `;
     Object.assign(helpPanel.style, {
@@ -244,6 +342,14 @@ MLMap | Version ${VERSION}
       userSelect: "none"
     });
     document.body.appendChild(helpPanel);
+    checkLatestVersion().then((v) => {
+      if (v.latest !== VERSION) {
+        const pre = helpPanel.querySelector("pre");
+        if (pre) {
+          pre.innerHTML = pre.innerHTML.replace(`v${VERSION}`, `v${VERSION} (update to v${v.latest})`);
+        }
+      }
+    });
     document.getElementById("closeHelp")?.addEventListener("click", () => {
       helpPanel.style.display = "none";
     });
@@ -529,6 +635,7 @@ MLMap | Version ${VERSION}
   }
 
   // src/main.ts
+  init_data();
   var MLMap = class {
     constructor(config = {}) {
       this.layers = [];
