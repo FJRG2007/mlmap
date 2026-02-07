@@ -10,6 +10,37 @@ import { exportWorkflow, importWorkflow, downloadWorkflow, uploadWorkflow, gener
 import { ClipMaskRenderer, ClipGroup } from "../video/clipMaskRenderer";
 
 export function initUIControls(baseMLMap: MLMap) {
+    // ---- DEVICE / SCREEN CHECK ----
+    const tooSmall = window.innerWidth < 900 || window.innerHeight < 500;
+    const touchOnly = window.matchMedia("(pointer: coarse)").matches
+        && !window.matchMedia("(pointer: fine)").matches;
+
+    if (tooSmall || touchOnly) {
+        const overlay = document.createElement("div");
+        overlay.id = "mlmap-device-warning";
+        overlay.style.cssText = "position:fixed;inset:0;z-index:9999999;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc;padding:32px;";
+        overlay.innerHTML = `
+            <div style="font-size:48px;margin-bottom:16px;">\uD83D\uDDA5\uFE0F</div>
+            <h2 style="color:#fff;margin:0 0 12px;font-size:20px;">Screen too small</h2>
+            <p style="max-width:400px;line-height:1.6;margin:0 0 24px;color:#999;">
+                MLMap requires a computer or tablet with a keyboard and mouse.<br>
+                Minimum screen size: 900 &times; 500 px.
+            </p>
+            <p style="font-size:12px;color:#555;">Current: ${window.innerWidth} &times; ${window.innerHeight} px</p>
+        `;
+        document.body.appendChild(overlay);
+
+        // Re-check on resize (user might rotate tablet or resize window)
+        window.addEventListener("resize", () => {
+            const ok = window.innerWidth >= 900 && window.innerHeight >= 500;
+            if (ok && overlay.parentElement) {
+                overlay.remove();
+            }
+        });
+
+        return;
+    }
+
     // ---- INJECT STYLES ----
     const style = document.createElement("style");
     style.textContent = `
