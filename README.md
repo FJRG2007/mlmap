@@ -11,7 +11,7 @@
   <hr />
 </div>
 
-![alt text](https://image.png)
+![Preview](https://raw.githubusercontent.com/FJRG2007/mlmap/refs/heads/main/gallery/images/image.png)
 
 MLMap is a browser-based projection mapping application built with TypeScript. It runs entirely on the client with no server required, making it easy to deploy as a static site or run directly from local files.
 
