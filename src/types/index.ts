@@ -33,3 +33,80 @@ export type Workspace = {
     version: string;
     layout: any;
 };
+
+// ---- Video & Channel Types ----
+
+export interface VideoSource {
+    id: string;
+    name: string;
+    url: string;
+    type: "url" | "file" | "capture";
+}
+
+export interface PlaylistItem {
+    id: string;
+    sourceId: string;
+    order: number;
+}
+
+export interface Playlist {
+    id: string;
+    name: string;
+    items: PlaylistItem[];
+    loop: boolean;
+}
+
+export interface VideoState {
+    playing: boolean;
+    currentTime: number;
+    duration: number;
+    volume: number;
+    muted: boolean;
+    currentName: string | null;
+    playlistIndex: number;
+    isFullscreen: boolean;
+}
+
+export type ChannelMessageType =
+    | "PLAY" | "PAUSE" | "STOP" | "SEEK" | "NEXT" | "PREVIOUS"
+    | "LOAD_VIDEO" | "LOAD_PLAYLIST"
+    | "SET_VOLUME" | "SET_MUTED"
+    | "UPDATE_LAYOUT" | "ADD_LAYER" | "REMOVE_LAYER"
+    | "FULLSCREEN_ENTER" | "FULLSCREEN_EXIT"
+    | "SEND_VIDEO_DATA"
+    | "PING"
+    | "DISPLAY_READY" | "PONG" | "SYNC_RESPONSE"
+    | "INIT_STATE";
+
+export interface ChannelMessage {
+    type: ChannelMessageType;
+    payload?: any;
+    timestamp: number;
+}
+
+export interface ManagedLayer {
+    id: string;
+    name: string;
+    type: "shape" | "video" | "iframe";
+    shapeType?: "square" | "circle" | "triangle";
+    videoUrl?: string;
+    iframeUrl?: string;
+    clipTo?: string;
+    width: number;
+    height: number;
+}
+
+export interface WorkflowData {
+    version: string;
+    name: string;
+    timestamp: number;
+    workspace: {
+        id: string;
+        name: string;
+        layout: any;
+    };
+    managedLayers: ManagedLayer[];
+    videoSources: VideoSource[];
+    playlists: Playlist[];
+    activePlaylistId: string | null;
+}

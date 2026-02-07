@@ -1,12 +1,12 @@
 {
   "name": "mlmap",
-  "version": "0.0.2.5",
+  "version": "0.1.0.0",
   "description": "",
   "main": "src/main.js",
   "scripts": {
-    "dev": "esbuild src/main.ts --bundle --outfile=dist/mlmap.js --sourcemap",
-    "dev:watch": "esbuild src/main.ts --bundle --outfile=dist/mlmap.js --sourcemap --watch",
-    "build": "esbuild src/main.ts --bundle --minify --outfile=dist/mlmap.min.js"
+    "dev": "node build.js",
+    "dev:watch": "node build.js --watch",
+    "build": "node build.js --minify"
   },
   "keywords": [],
   "author": "FJRG2007",

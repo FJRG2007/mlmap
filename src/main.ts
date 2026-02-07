@@ -3,7 +3,8 @@ import * as Types from "./types";
 import * as utils from "./utils/basics";
 import * as storage from "./utils/storage";
 import { initUIControls } from "./uiControls";
-import { historyStack, historyLimit } from "./lib/data";
+import { historyStack, historyLimit, redoStack } from "./lib/data";
+import { checkUrlForWorkflow } from "./utils/workflow";
 
 export class MLMap {
     private showLayerNames: boolean;
@@ -13,6 +14,7 @@ export class MLMap {
     private autoLoad: boolean;
     private layerList: (HTMLElement | string)[];
     public layoutChangeListener: () => void;
+    public onAfterDraw: (() => void) | null = null;
 
     private canvas: HTMLCanvasElement;
     private context: CanvasRenderingContext2D;
@@ -24,11 +26,22 @@ export class MLMap {
     private dragOffset: [number, number] = [0, 0];
 
     private selectedLayer: Types.Layer | null = null;
+    private selectedLayers: Types.Layer[] = [];
     private selectedPoint: number[] | null = null;
     private selectionRadius = 20;
     private hoveringPoint: number[] | null = null;
     private hoveringLayer: Types.Layer | null = null;
     private isLayerSoloed = false;
+    public snapEnabled = true;
+    public onSnapChanged: ((enabled: boolean) => void) | null = null;
+    private readonly SNAP_THRESHOLD = 12;
+    public workspaceZoom = 1;
+
+    // Rubber band selection state
+    private rubberBandActive = false;
+    private rubberBandStart: [number, number] = [0, 0];
+    private rubberBandEnd: [number, number] = [0, 0];
+    private rubberBandBaseSelection: Types.Layer[] = [];
 
     private mousePosition: [number, number] = [0, 0];
     private mouseDelta: [number, number] = [0, 0];
@@ -61,6 +74,8 @@ export class MLMap {
         const observer = new MutationObserver((mutationsList) => {
             mutationsList.forEach((mutation) => {
                 mutation.removedNodes.forEach((node) => {
+                    // Skip nodes that were just moved (appendChild re-appends)
+                    if ((node as Element).isConnected) return;
                     this.layers.forEach((layer, i) => {
                         if (layer.element === node) {
                             if (layer.overlay) layer.overlay.remove();
@@ -101,6 +116,7 @@ export class MLMap {
         const snapshot = this.getLayout();
         historyStack.push(JSON.stringify(snapshot));
         if (historyStack.length > historyLimit) historyStack.shift();
+        redoStack.length = 0;
     };
 
     private saveSettings() {
@@ -220,11 +236,23 @@ export class MLMap {
 
     private undo() {
         if (historyStack.length > 1) {
-            historyStack.pop();
+            redoStack.push(historyStack.pop()!);
             var last = JSON.parse(historyStack[historyStack.length - 1]);
             this.setLayout(last);
             this.draw();
             if (this.autoSave) this.saveSettings();
+            this.layoutChangeListener();
+        }
+    };
+
+    private redo() {
+        if (redoStack.length > 0) {
+            const state = redoStack.pop()!;
+            historyStack.push(state);
+            this.setLayout(JSON.parse(state));
+            this.draw();
+            if (this.autoSave) this.saveSettings();
+            this.layoutChangeListener();
         }
     };
 
@@ -288,6 +316,8 @@ export class MLMap {
         }
 
         this.layers.push(layer);
+        // Ensure new layer is visually on top (DOM z-stacking follows DOM order)
+        element.parentElement?.appendChild(element);
         this.updateTransform();
     };
 
@@ -345,18 +375,211 @@ export class MLMap {
         if (!enabled) {
             this.selectedPoint = null;
             this.selectedLayer = null;
+            this.selectedLayers = [];
             this.dragging = false;
+            this.rubberBandActive = false;
             this.showScreenBounds = false;
         } else this.draw();
     };
 
+    // ---- Context menu helpers ----
+    public getSelectedLayer(): Types.Layer | null { return this.selectedLayer; }
+    public getLayers(): Types.Layer[] { return this.layers; }
+
+    public getLayerAtPoint(x: number, y: number): Types.Layer | null {
+        const [wx, wy] = this.toWorkspace(x, y);
+        for (let i = this.layers.length - 1; i >= 0; i--) {
+            const layer = this.layers[i];
+            if (!layer.visible) continue;
+            if (this.pointInLayer([wx, wy], layer)) return layer;
+        }
+        return null;
+    }
+
+    public selectLayer(layer: Types.Layer | null): void {
+        this.selectedLayer = layer;
+        this.selectedLayers = layer ? [layer] : [];
+        this.selectedPoint = null;
+        this.draw();
+    }
+
+    public getSelectedLayers(): Types.Layer[] { return [...this.selectedLayers]; }
+
+    public centerLayer(layer: Types.Layer): void {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        let lcx = 0, lcy = 0;
+        for (const p of layer.targetPoints) { lcx += p[0]; lcy += p[1]; }
+        lcx /= 4; lcy /= 4;
+        const dx = cx - lcx, dy = cy - lcy;
+        for (const p of layer.targetPoints) { p[0] += dx; p[1] += dy; }
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public rotateLayerPublic(layer: Types.Layer, angleDeg: number): void {
+        this.rotateLayer(layer, (angleDeg * Math.PI) / 180);
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public flipLayerH(layer: Types.Layer): void {
+        this.swapLayerPoints(layer.sourcePoints, 0, 1);
+        this.swapLayerPoints(layer.sourcePoints, 3, 2);
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public flipLayerV(layer: Types.Layer): void {
+        this.swapLayerPoints(layer.sourcePoints, 0, 3);
+        this.swapLayerPoints(layer.sourcePoints, 1, 2);
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public deleteSelectedLayer(layer: Types.Layer): void {
+        layer.element.remove();
+        if (layer.overlay) layer.overlay.remove();
+        const index = this.layers.indexOf(layer);
+        if (index >= 0) this.layers.splice(index, 1);
+        if (this.selectedLayer === layer) this.selectedLayer = null;
+        const selIdx = this.selectedLayers.indexOf(layer);
+        if (selIdx >= 0) this.selectedLayers.splice(selIdx, 1);
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public scaleLayerPublic(layer: Types.Layer, scale: number): void {
+        this.scaleLayer(layer, scale);
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    // ---- Layer ordering ----
+    public moveLayerUp(layer: Types.Layer): void {
+        const idx = this.layers.indexOf(layer);
+        if (idx < 0 || idx >= this.layers.length - 1) return;
+        this.layers[idx] = this.layers[idx + 1];
+        this.layers[idx + 1] = layer;
+        this.reorderLayerDOM();
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public moveLayerDown(layer: Types.Layer): void {
+        const idx = this.layers.indexOf(layer);
+        if (idx <= 0) return;
+        this.layers[idx] = this.layers[idx - 1];
+        this.layers[idx - 1] = layer;
+        this.reorderLayerDOM();
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public moveLayerToTop(layer: Types.Layer): void {
+        const idx = this.layers.indexOf(layer);
+        if (idx < 0 || idx === this.layers.length - 1) return;
+        this.layers.splice(idx, 1);
+        this.layers.push(layer);
+        this.reorderLayerDOM();
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public moveLayerToBottom(layer: Types.Layer): void {
+        const idx = this.layers.indexOf(layer);
+        if (idx <= 0) return;
+        this.layers.splice(idx, 1);
+        this.layers.unshift(layer);
+        this.reorderLayerDOM();
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    private reorderLayerDOM(): void {
+        for (const layer of this.layers) {
+            layer.element.parentElement?.appendChild(layer.element);
+        }
+    }
+
+    public resetLayerTransform(layer: Types.Layer): void {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const hw = layer.width / 2, hh = layer.height / 2;
+        layer.targetPoints = [
+            [cx - hw, cy - hh], [cx + hw, cy - hh],
+            [cx + hw, cy + hh], [cx - hw, cy + hh]
+        ];
+        layer.sourcePoints = [
+            [0, 0], [layer.width, 0],
+            [layer.width, layer.height], [0, layer.height]
+        ];
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
     // ---------------- Utils ----------------
+    private layerIntersectsRect(layer: Types.Layer, x1: number, y1: number, x2: number, y2: number): boolean {
+        const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
+        const rx2 = Math.max(x1, x2), ry2 = Math.max(y1, y2);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of layer.targetPoints) {
+            if (p[0] < minX) minX = p[0];
+            if (p[1] < minY) minY = p[1];
+            if (p[0] > maxX) maxX = p[0];
+            if (p[1] > maxY) maxY = p[1];
+        }
+        return !(maxX < rx || minX > rx2 || maxY < ry || minY > ry2);
+    }
+
     private draw() {
         if (!this.configActive) return;
 
         this.context.strokeStyle = "red";
         this.context.lineWidth = 2;
         this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+        if (this.workspaceZoom !== 1) {
+            this.context.save();
+            const zCx = this.canvas.width / 2;
+            const zCy = this.canvas.height / 2;
+            this.context.translate(zCx, zCy);
+            this.context.scale(this.workspaceZoom, this.workspaceZoom);
+            this.context.translate(-zCx, -zCy);
+        }
 
         for (let i = 0; i < this.layers.length; i++) {
             const layer = this.layers[i];
@@ -366,8 +589,8 @@ export class MLMap {
 
                 // Draw layer rectangles.
                 this.context.beginPath();
-                if (layer === this.hoveringLayer) this.context.strokeStyle = "red";
-                else if (layer === this.selectedLayer) this.context.strokeStyle = "red";
+                if (this.selectedLayers.includes(layer)) this.context.strokeStyle = "red";
+                else if (layer === this.hoveringLayer) this.context.strokeStyle = "red";
                 else this.context.strokeStyle = "white";
 
                 this.context.moveTo(layer.targetPoints[0][0], layer.targetPoints[0][1]);
@@ -466,18 +689,132 @@ export class MLMap {
             this.context.fillText(`${this.canvas.width} x ${this.canvas.height}`, this.canvas.width / 2, this.canvas.height / 2 + (fontSize * 0.75));
             this.context.fillText("Display size", this.canvas.width / 2, this.canvas.height / 2 - (fontSize * 0.75));
         }
+
+        // Draw rubber band selection rectangle
+        if (this.rubberBandActive) {
+            const rx = Math.min(this.rubberBandStart[0], this.rubberBandEnd[0]);
+            const ry = Math.min(this.rubberBandStart[1], this.rubberBandEnd[1]);
+            const rw = Math.abs(this.rubberBandEnd[0] - this.rubberBandStart[0]);
+            const rh = Math.abs(this.rubberBandEnd[1] - this.rubberBandStart[1]);
+            this.context.strokeStyle = "rgba(51, 153, 255, 0.8)";
+            this.context.fillStyle = "rgba(51, 153, 255, 0.1)";
+            this.context.lineWidth = 1;
+            this.context.fillRect(rx, ry, rw, rh);
+            this.context.strokeRect(rx, ry, rw, rh);
+        }
+
+        if (this.workspaceZoom !== 1) {
+            this.context.restore();
+        }
+
+        if (this.onAfterDraw) this.onAfterDraw();
     };
+
+    private snapLayerToEdges(layer: Types.Layer): void {
+        if (!this.snapEnabled) return;
+        const t = this.SNAP_THRESHOLD;
+
+        // Get bounding box of the moving layer
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of layer.targetPoints) {
+            if (p[0] < minX) minX = p[0];
+            if (p[1] < minY) minY = p[1];
+            if (p[0] > maxX) maxX = p[0];
+            if (p[1] > maxY) maxY = p[1];
+        }
+
+        let snapDx = 0, snapDy = 0;
+        let snappedX = false, snappedY = false;
+
+        // Snap to screen edges
+        if (Math.abs(minX) < t) { snapDx = -minX; snappedX = true; }
+        else if (Math.abs(maxX - window.innerWidth) < t) { snapDx = window.innerWidth - maxX; snappedX = true; }
+        if (Math.abs(minY) < t) { snapDy = -minY; snappedY = true; }
+        else if (Math.abs(maxY - window.innerHeight) < t) { snapDy = window.innerHeight - maxY; snappedY = true; }
+
+        // Snap to other layers' edges
+        for (const other of this.layers) {
+            if (other === layer || !other.visible) continue;
+            let oMinX = Infinity, oMinY = Infinity, oMaxX = -Infinity, oMaxY = -Infinity;
+            for (const p of other.targetPoints) {
+                if (p[0] < oMinX) oMinX = p[0];
+                if (p[1] < oMinY) oMinY = p[1];
+                if (p[0] > oMaxX) oMaxX = p[0];
+                if (p[1] > oMaxY) oMaxY = p[1];
+            }
+            // Snap right edge to left edge, left to right, etc
+            if (!snappedX) {
+                if (Math.abs(maxX - oMinX) < t) { snapDx = oMinX - maxX; snappedX = true; }
+                else if (Math.abs(minX - oMaxX) < t) { snapDx = oMaxX - minX; snappedX = true; }
+                else if (Math.abs(minX - oMinX) < t) { snapDx = oMinX - minX; snappedX = true; }
+                else if (Math.abs(maxX - oMaxX) < t) { snapDx = oMaxX - maxX; snappedX = true; }
+            }
+            if (!snappedY) {
+                if (Math.abs(maxY - oMinY) < t) { snapDy = oMinY - maxY; snappedY = true; }
+                else if (Math.abs(minY - oMaxY) < t) { snapDy = oMaxY - minY; snappedY = true; }
+                else if (Math.abs(minY - oMinY) < t) { snapDy = oMinY - minY; snappedY = true; }
+                else if (Math.abs(maxY - oMaxY) < t) { snapDy = oMaxY - maxY; snappedY = true; }
+            }
+            if (snappedX && snappedY) break;
+        }
+
+        if (snapDx !== 0 || snapDy !== 0) {
+            for (const p of layer.targetPoints) {
+                p[0] += snapDx;
+                p[1] += snapDy;
+            }
+        }
+    }
+
+    private toWorkspace(vx: number, vy: number): [number, number] {
+        if (this.workspaceZoom === 1) return [vx, vy];
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        return [
+            (vx - cx) / this.workspaceZoom + cx,
+            (vy - cy) / this.workspaceZoom + cy,
+        ];
+    }
+
+    public setWorkspaceZoom(zoom: number): void {
+        this.workspaceZoom = Math.max(0.1, Math.min(1, zoom));
+        this.draw();
+    }
 
     private mouseMove(event: MouseEvent) {
         if (!this.configActive) return;
 
-        event.preventDefault();
+        if (this.dragging || this.rubberBandActive) event.preventDefault();
 
-        this.mouseDelta[0] = event.clientX - this.mousePosition[0];
-        this.mouseDelta[1] = event.clientY - this.mousePosition[1];
+        const [wx, wy] = this.toWorkspace(event.clientX, event.clientY);
+        this.mouseDelta[0] = wx - this.mousePosition[0];
+        this.mouseDelta[1] = wy - this.mousePosition[1];
 
-        this.mousePosition[0] = event.clientX;
-        this.mousePosition[1] = event.clientY;
+        this.mousePosition[0] = wx;
+        this.mousePosition[1] = wy;
+
+        // Rubber band selection
+        if (this.rubberBandActive) {
+            this.rubberBandEnd = [wx, wy];
+            const rbLayers: Types.Layer[] = [];
+            for (const layer of this.layers) {
+                if (!layer.visible) continue;
+                if (this.layerIntersectsRect(layer,
+                    this.rubberBandStart[0], this.rubberBandStart[1],
+                    this.rubberBandEnd[0], this.rubberBandEnd[1])) {
+                    rbLayers.push(layer);
+                }
+            }
+            // Merge with base selection (Ctrl held at start)
+            const merged = [...this.rubberBandBaseSelection];
+            for (const l of rbLayers) {
+                if (!merged.includes(l)) merged.push(l);
+            }
+            this.selectedLayers = merged;
+            this.selectedLayer = this.selectedLayers[this.selectedLayers.length - 1] || null;
+            this.draw();
+            return;
+        }
 
         if (this.dragging) {
             const scale = event.shiftKey ? 0.1 : 1;
@@ -488,14 +825,18 @@ export class MLMap {
                     this.selectedPoint[0] += this.mouseDelta[0] * scale;
                     this.selectedPoint[1] += this.mouseDelta[1] * scale;
                 }
-            } else if (this.selectedLayer) {
-                if (event.altKey) this.rotateLayer(this.selectedLayer, this.mouseDelta[0] * (0.01 * scale));
-                if (event.ctrlKey) this.scaleLayer(this.selectedLayer, (this.mouseDelta[1] * (-0.005 * scale)) + 1.0);
-                else {
-                    for (let i = 0; i < this.selectedLayer.targetPoints.length; i++) {
-                        this.selectedLayer.targetPoints[i][0] += this.mouseDelta[0] * scale;
-                        this.selectedLayer.targetPoints[i][1] += this.mouseDelta[1] * scale;
+            } else if (this.selectedLayers.length > 0) {
+                if (event.altKey && this.selectedLayer) {
+                    this.rotateLayer(this.selectedLayer, this.mouseDelta[0] * (0.01 * scale));
+                } else {
+                    // Move all selected layers
+                    for (const layer of this.selectedLayers) {
+                        for (let i = 0; i < layer.targetPoints.length; i++) {
+                            layer.targetPoints[i][0] += this.mouseDelta[0] * scale;
+                            layer.targetPoints[i][1] += this.mouseDelta[1] * scale;
+                        }
                     }
+                    if (this.selectedLayer) this.snapLayerToEdges(this.selectedLayer);
                 }
             }
 
@@ -517,7 +858,7 @@ export class MLMap {
 
             for (let p = 0; p < layer.targetPoints.length; p++) {
                 const point = layer.targetPoints[p];
-                if (utils.distanceTo(point[0], point[1], event.clientX, event.clientY) < this.selectionRadius) {
+                if (utils.distanceTo(point[0], point[1], this.mousePosition[0], this.mousePosition[1]) < this.selectionRadius) {
                     this.hoveringPoint = point;
                     this.hoveringLayer = layer;
                     this.canvas.style.cursor = "pointer";
@@ -545,48 +886,96 @@ export class MLMap {
 
     private mouseDown(event: MouseEvent) {
         if (!this.configActive) return;
+        if (event.button === 2) return; // Right click handled by context menu
 
-        this.mouseDownPoint = [event.clientX, event.clientY];
+        const [mdx, mdy] = this.toWorkspace(event.clientX, event.clientY);
+        this.mouseDownPoint = [mdx, mdy];
         this.selectedPoint = null;
-        this.selectedLayer = null;
+        this.rubberBandActive = false;
 
-        // First select a point if you are on one.
+        // First: check for point click
+        let clickedLayer: Types.Layer | null = null;
+        let clickedPoint: number[] | null = null;
+
         for (let i = this.layers.length - 1; i >= 0; i--) {
             const layer = this.layers[i];
             if (!layer.visible) continue;
-
             for (let p = 0; p < layer.targetPoints.length; p++) {
                 const point = layer.targetPoints[p];
-                if (utils.distanceTo(point[0], point[1], event.clientX, event.clientY) < this.selectionRadius) {
-                    this.selectedPoint = point;
-                    this.selectedLayer = layer;
+                if (utils.distanceTo(point[0], point[1], mdx, mdy) < this.selectionRadius) {
+                    clickedPoint = point;
+                    clickedLayer = layer;
                     break;
                 }
             }
-            if (this.selectedLayer) break;
+            if (clickedLayer) break;
         }
 
-        // If there is no point, select by layer.
-        if (!this.selectedLayer) {
+        // Then: check for layer click
+        if (!clickedLayer) {
             for (let i = this.layers.length - 1; i >= 0; i--) {
                 const layer = this.layers[i];
                 if (!layer.visible) continue;
-                if (this.pointInLayer([event.clientX, event.clientY], layer)) {
-                    this.selectedLayer = layer;
+                if (this.pointInLayer([mdx, mdy], layer)) {
+                    clickedLayer = layer;
                     break;
                 }
             }
         }
 
-        if (this.selectedLayer) {
+        if (clickedPoint) {
+            // Point editing: single layer mode
+            this.selectedPoint = clickedPoint;
+            this.selectedLayer = clickedLayer;
+            this.selectedLayers = [clickedLayer!];
             this.dragging = true;
-            this.draw();
+        } else if (clickedLayer) {
+            if (event.ctrlKey) {
+                // Ctrl+click: toggle layer in multi-selection
+                const idx = this.selectedLayers.indexOf(clickedLayer);
+                if (idx >= 0) {
+                    this.selectedLayers.splice(idx, 1);
+                    this.selectedLayer = this.selectedLayers[this.selectedLayers.length - 1] || null;
+                } else {
+                    this.selectedLayers.push(clickedLayer);
+                    this.selectedLayer = clickedLayer;
+                }
+                this.dragging = this.selectedLayers.length > 0;
+            } else {
+                // Normal click
+                if (this.selectedLayers.includes(clickedLayer)) {
+                    // Already in selection: keep multi-selection for dragging
+                    this.selectedLayer = clickedLayer;
+                } else {
+                    // Not selected: single select
+                    this.selectedLayers = [clickedLayer];
+                    this.selectedLayer = clickedLayer;
+                }
+                this.dragging = true;
+            }
+        } else {
+            // Empty space: start rubber band
+            this.selectedLayer = null;
+            this.rubberBandBaseSelection = event.ctrlKey ? [...this.selectedLayers] : [];
+            if (!event.ctrlKey) this.selectedLayers = [];
+            this.rubberBandActive = true;
+            this.rubberBandStart = [mdx, mdy];
+            this.rubberBandEnd = [mdx, mdy];
+            this.dragging = false;
         }
+
+        this.draw();
     }
 
 
     private mouseUp(_event: MouseEvent) {
         if (!this.configActive) return;
+
+        if (this.rubberBandActive) {
+            this.rubberBandActive = false;
+            this.draw();
+            return;
+        }
 
         if (this.dragging) {
             this.pushHistory();
@@ -650,12 +1039,11 @@ export class MLMap {
 
             case 83: // s key, solo/unsolo quads.
                 if (!this.isLayerSoloed) {
-
-                    if (this.selectedLayer != null) {
+                    if (this.selectedLayers.length > 0) {
                         for (var i = 0; i < this.layers.length; i++) {
                             this.layers[i].visible = false;
                         }
-                        this.selectedLayer.visible = true;
+                        for (const sl of this.selectedLayers) sl.visible = true;
                         dirty = true;
                         this.isLayerSoloed = true;
                     }
@@ -665,8 +1053,12 @@ export class MLMap {
                     }
                     this.isLayerSoloed = false;
                     dirty = true;
-
                 }
+                break;
+
+            case 71: // g key, toggle snap
+                this.snapEnabled = !this.snapEnabled;
+                if (this.onSnapChanged) this.onSnapChanged(this.snapEnabled);
                 break;
 
             case 66: // b key, toggle projector bounds rectangle.
@@ -701,16 +1093,31 @@ export class MLMap {
                 }
                 break;
             case 90: // z key
-                if (event.ctrlKey) this.undo();
+                if (event.ctrlKey) {
+                    event.preventDefault();
+                    this.undo();
+                    return;
+                }
+                break;
+
+            case 89: // y key
+                if (event.ctrlKey) {
+                    event.preventDefault();
+                    this.redo();
+                    return;
+                }
                 break;
 
             case 46: // Delete key
             case 8:  // Backspace key
-                if (this.selectedLayer) {
-                    this.selectedLayer.element.remove();
-                    if (this.selectedLayer.overlay) this.selectedLayer.overlay.remove();
-                    const index = this.layers.indexOf(this.selectedLayer);
-                    if (index >= 0) this.layers.splice(index, 1);
+                if (this.selectedLayers.length > 0) {
+                    for (const layer of [...this.selectedLayers]) {
+                        layer.element.remove();
+                        if (layer.overlay) layer.overlay.remove();
+                        const index = this.layers.indexOf(layer);
+                        if (index >= 0) this.layers.splice(index, 1);
+                    }
+                    this.selectedLayers = [];
                     this.selectedLayer = null;
                     dirty = true;
                     this.updateTransform();
@@ -725,14 +1132,16 @@ export class MLMap {
                 this.selectedPoint[0] += delta[0];
                 this.selectedPoint[1] += delta[1];
                 dirty = true;
-            } else if (this.selectedLayer) {
-                if (event.altKey == true) {
+            } else if (this.selectedLayers.length > 0) {
+                if (event.altKey == true && this.selectedLayer) {
                     this.rotateLayer(this.selectedLayer, delta[0] * 0.01);
                     this.scaleLayer(this.selectedLayer, (delta[1] * -0.005) + 1.0);
                 } else {
-                    for (var i = 0; i < this.selectedLayer.targetPoints.length; i++) {
-                        this.selectedLayer.targetPoints[i][0] += delta[0];
-                        this.selectedLayer.targetPoints[i][1] += delta[1];
+                    for (const layer of this.selectedLayers) {
+                        for (var i = 0; i < layer.targetPoints.length; i++) {
+                            layer.targetPoints[i][0] += delta[0];
+                            layer.targetPoints[i][1] += delta[1];
+                        }
                     }
                 }
                 dirty = true;
@@ -750,8 +1159,14 @@ export class MLMap {
     };
 };
 
+// Check URL for shared workflow before initializing
+checkUrlForWorkflow();
+
 const baseMLMap = new MLMap({ layers: [] });
 
 initUIControls(baseMLMap);
+
+// Start with edit mode and UI visible
+baseMLMap.setConfigEnabled(true);
 
 (window as any).MLMap = MLMap;
