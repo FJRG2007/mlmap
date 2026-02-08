@@ -34,7 +34,7 @@
   var init_data = __esm({
     "src/lib/data.ts"() {
       "use strict";
-      VERSION = "0.1.0.0";
+      VERSION = "0.1.0.1";
       historyStack = [];
       redoStack = [];
       historyLimit = 50;
@@ -708,6 +708,8 @@
         localVideo.currentTime = 0;
         localVideo.play().catch(() => {
         });
+        bridge.send("SEEK", { time: 0 });
+        bridge.send("PLAY");
       }
     }
     function getCurrentSourceName() {
@@ -1102,6 +1104,9 @@ ${options}`, "1");
       }).filter((i) => i.url);
       bridge.send("LOAD_PLAYLIST", { items, loop: active.loop, startIndex: localPlaylistIndex });
     }
+    function togglePlayPause() {
+      $("tp-play").click();
+    }
     renderLibrary();
     renderPlaylistSelector();
     renderPlaylist();
@@ -1112,7 +1117,8 @@ ${options}`, "1");
       syncPlaybackToDisplay,
       registerVideoElement,
       setActiveVideo,
-      getActiveVideo: () => localVideo
+      getActiveVideo: () => localVideo,
+      togglePlayPause
     };
   }
 
@@ -1701,6 +1707,9 @@ ${options}`, "1");
     let displayWindow = null;
     let managedLayers = [];
     const MANAGED_LAYERS_KEY2 = "mlmap.managedLayers";
+    const RES_KEY = "mlmap:outputResolution";
+    let outputResolution = null;
+    let autoDisplaySize = null;
     const clipMaskRenderer = new ClipMaskRenderer(() => getClipGroups());
     function getClipGroups() {
       const groups = [];
@@ -1757,10 +1766,24 @@ ${options}`, "1");
                 <span id="tb-zoomLabel" style="font-size:10px;color:#888;min-width:30px;">100%</span>
             </div>
             <div class="toolbar-group">
+                <span style="font-size:10px;color:#666;">Output</span>
+                <select id="tb-resolution" class="mlmap-select" title="Output resolution" style="max-width:130px;">
+                    <option value="auto">Auto</option>
+                    <option value="1920x1080">1920x1080</option>
+                    <option value="1280x720">1280x720</option>
+                    <option value="3840x2160">3840x2160</option>
+                    <option value="1024x768">1024x768</option>
+                    <option value="custom">Custom...</option>
+                </select>
+                <input id="tb-resW" class="mlmap-input" type="number" style="width:50px;display:none;" placeholder="W">
+                <input id="tb-resH" class="mlmap-input" type="number" style="width:50px;display:none;" placeholder="H">
+            </div>
+            <div class="toolbar-group">
                 <select id="tb-monitor" class="mlmap-select" title="Select output monitor" style="max-width:140px;">
                     <option value="">Monitor...</option>
                 </select>
                 <button id="tb-launch" class="mlmap-btn mlmap-btn-primary">Launch Output</button>
+                <button id="tb-exportTpl" class="mlmap-btn" title="Export layout template as image">TPL</button>
                 <button id="tb-fullscreen" class="mlmap-btn" title="Fullscreen output">FS</button>
                 <span class="status-dot disconnected" id="tb-status" title="Display disconnected"></span>
                 <button id="tb-toggleRight" class="mlmap-btn" title="Toggle media panel" style="font-size:10px;padding:4px 5px;">&raquo;</button>
@@ -1817,6 +1840,7 @@ ${options}`, "1");
         <div class="mlmap-section" style="border-bottom:none;">
             <div class="mlmap-section-title">Shortcuts</div>
             <pre style="font-size:10px;color:#666;margin:0;white-space:pre-wrap;line-height:1.5;">SHIFT+Space: Toggle edit mode
+Space: Play/Pause video
 Drag: Move | SHIFT+Drag: Precise
 ALT+Drag: Rotate/Scale
 Ctrl+Click: Multi-select layers
@@ -1835,15 +1859,37 @@ G: Toggle snap | Right-click: Menu</pre>
       }).catch(() => {
       });
     }
+    function getDisplayLayout() {
+      const layout = baseMLMap2.getLayout();
+      const frame = baseMLMap2.outputFrame;
+      if (!frame || frame.w <= 0 || frame.h <= 0) return layout;
+      const sx = frame.resW / frame.w;
+      const sy = frame.resH / frame.h;
+      return layout.map((item) => ({
+        ...item,
+        targetPoints: item.targetPoints.map((p) => [
+          (p[0] - frame.x) * sx,
+          (p[1] - frame.y) * sy
+        ])
+      }));
+    }
+    function sendLayoutToDisplay() {
+      bridge.send("UPDATE_LAYOUT", { layout: getDisplayLayout() });
+    }
+    function getVideoLayerSize() {
+      const res = outputResolution || autoDisplaySize;
+      return res ? { w: res.width, h: res.height } : { w: 1920, h: 1080 };
+    }
     function onAddVideoLayer(url, name, stream) {
       const id = `vlayer_${Date.now()}`;
+      const vSize = getVideoLayerSize();
       const div = document.createElement("div");
       div.id = id;
       div.style.position = "fixed";
       div.style.top = "0px";
       div.style.left = "0px";
-      div.style.width = "400px";
-      div.style.height = "300px";
+      div.style.width = vSize.w + "px";
+      div.style.height = vSize.h + "px";
       div.style.overflow = "hidden";
       div.style.background = "#000";
       const video = document.createElement("video");
@@ -1880,13 +1926,13 @@ G: Toggle snap | Right-click: Menu</pre>
       const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
       baseMLMap2.addLayer(div, [[cx - 200, cy - 150], [cx + 200, cy - 150], [cx + 200, cy + 150], [cx - 200, cy + 150]]);
       videoCtrl.registerVideoElement(video);
-      const layerInfo = { id, name, type: "video", videoUrl: stream ? void 0 : url, width: 400, height: 300 };
+      const layerInfo = { id, name, type: "video", videoUrl: stream ? void 0 : url, width: vSize.w, height: vSize.h };
       managedLayers.push(layerInfo);
       saveManagedLayers();
       renderLayerList();
       bridge.send("ADD_LAYER", layerInfo);
       if (!stream && url) sendVideoDataToDisplay(id, url);
-      setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() }), 100);
+      setTimeout(() => sendLayoutToDisplay(), 100);
     }
     function createShape(type) {
       const id = `shape_${Date.now()}`;
@@ -1919,7 +1965,7 @@ G: Toggle snap | Right-click: Menu</pre>
       saveManagedLayers();
       renderLayerList();
       bridge.send("ADD_LAYER", layerInfo);
-      setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() }), 100);
+      setTimeout(() => sendLayoutToDisplay(), 100);
     }
     function createIframeLayer(url) {
       const id = `iframe_${Date.now()}`;
@@ -1949,7 +1995,7 @@ G: Toggle snap | Right-click: Menu</pre>
       saveManagedLayers();
       renderLayerList();
       bridge.send("ADD_LAYER", layerInfo);
-      setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() }), 100);
+      setTimeout(() => sendLayoutToDisplay(), 100);
     }
     function deleteLayer(id) {
       managedLayers.forEach((ml2) => {
@@ -2151,6 +2197,11 @@ G: Toggle snap | Right-click: Menu</pre>
       if (!ml || ml.type !== "video") return;
       const div = document.getElementById(layerId);
       if (!div) return;
+      const vSize = getVideoLayerSize();
+      div.style.width = vSize.w + "px";
+      div.style.height = vSize.h + "px";
+      ml.width = vSize.w;
+      ml.height = vSize.h;
       div.innerHTML = "";
       div.style.background = "#000";
       const video = document.createElement("video");
@@ -2174,13 +2225,18 @@ G: Toggle snap | Right-click: Menu</pre>
       }
       bridge.send("ADD_LAYER", ml);
       sendVideoDataToDisplay(layerId, url);
-      setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() }), 100);
+      setTimeout(() => sendLayoutToDisplay(), 100);
     }
     function assignCaptureToLayer(layerId, stream, name) {
       const ml = managedLayers.find((l) => l.id === layerId);
       if (!ml || ml.type !== "video") return;
       const div = document.getElementById(layerId);
       if (!div) return;
+      const vSize = getVideoLayerSize();
+      div.style.width = vSize.w + "px";
+      div.style.height = vSize.h + "px";
+      ml.width = vSize.w;
+      ml.height = vSize.h;
       div.innerHTML = "";
       div.style.background = "#000";
       const video = document.createElement("video");
@@ -2215,7 +2271,7 @@ G: Toggle snap | Right-click: Menu</pre>
         updateClipMaskRendererState();
       }
       bridge.send("ADD_LAYER", ml);
-      setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() }), 100);
+      setTimeout(() => sendLayoutToDisplay(), 100);
     }
     document.getElementById("lp-addSquare").addEventListener("click", () => createShape("square"));
     document.getElementById("lp-addCircle").addEventListener("click", () => createShape("circle"));
@@ -2284,6 +2340,13 @@ G: Toggle snap | Right-click: Menu</pre>
                     <div class="ctx-item" data-action="resetTransform">Reset Transform</div>
                 </div>
             </div>
+            <div class="ctx-has-sub">
+                <div class="ctx-item">Fit to Output<span class="ctx-arrow">\u25B6</span></div>
+                <div class="ctx-submenu">
+                    <div class="ctx-item" data-action="fitOutput">Fit to Output</div>
+                    <div class="ctx-item" data-action="stretchOutput">Stretch to Output</div>
+                </div>
+            </div>
             <div class="ctx-sep"></div>
             ${clipLabel ? `<div class="ctx-item" data-action="toggleClip">${clipLabel}</div><div class="ctx-sep"></div>` : ""}
             <div class="ctx-item" data-action="solo">Solo / Unsolo<span class="shortcut">S</span></div>
@@ -2343,6 +2406,16 @@ G: Toggle snap | Right-click: Menu</pre>
             case "resetTransform":
               baseMLMap2.resetLayerTransform(layer);
               break;
+            case "fitOutput": {
+              const frame = baseMLMap2.outputFrame || { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+              baseMLMap2.fitToFrame(layer, frame);
+              break;
+            }
+            case "stretchOutput": {
+              const frame = baseMLMap2.outputFrame || { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+              baseMLMap2.stretchToFrame(layer, frame);
+              break;
+            }
             case "toggleClip":
               if (isClipped) releaseClipMask(layerId);
               else createClipMask(layerId);
@@ -2578,6 +2651,19 @@ ${options}`, "1");
     document.getElementById("tb-fullscreen").addEventListener("click", () => {
       bridge.send("FULLSCREEN_ENTER");
     });
+    document.getElementById("tb-exportTpl").addEventListener("click", () => {
+      const res = outputResolution || autoDisplaySize || { width: window.innerWidth, height: window.innerHeight };
+      const canvas = baseMLMap2.exportTemplate(res.width, res.height);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `mlmap-template-${res.width}x${res.height}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    });
     bridge.onConnectionChanged = (connected) => {
       const dot = document.getElementById("tb-status");
       dot.className = connected ? "status-dot connected" : "status-dot disconnected";
@@ -2586,7 +2672,7 @@ ${options}`, "1");
     bridge.on("DISPLAY_READY", () => {
       managedLayers.forEach((layer) => bridge.send("ADD_LAYER", layer));
       setTimeout(() => {
-        bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() });
+        sendLayoutToDisplay();
         videoCtrl.sendPlaylistToDisplay();
         managedLayers.forEach((layer) => {
           if (layer.type === "video") {
@@ -2637,10 +2723,12 @@ ${options}`, "1");
     document.getElementById("tb-toggleLeft").addEventListener("click", () => {
       leftVisible = !leftVisible;
       updatePanelLayout();
+      calcOutputFrame();
     });
     document.getElementById("tb-toggleRight").addEventListener("click", () => {
       rightVisible = !rightVisible;
       updatePanelLayout();
+      calcOutputFrame();
     });
     const zoomSlider = document.getElementById("tb-zoom");
     const zoomLabel = document.getElementById("tb-zoomLabel");
@@ -2672,12 +2760,13 @@ ${options}`, "1");
       }
     }
     baseMLMap2.onAfterDraw = reapplyClipMaskVisibility;
+    baseMLMap2.onSpaceBar = () => videoCtrl.togglePlayPause();
     baseMLMap2.layoutChangeListener = () => {
       if (activeWorkspace) {
         activeWorkspace.layout = baseMLMap2.getLayout();
         saveWorkspace(activeWorkspace);
       }
-      bridge.send("UPDATE_LAYOUT", { layout: baseMLMap2.getLayout() });
+      sendLayoutToDisplay();
     };
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
@@ -2706,12 +2795,114 @@ ${options}`, "1");
     if (activeWorkspace?.layout) {
       baseMLMap2.setLayout(activeWorkspace.layout);
     }
+    baseMLMap2.resetHistory();
     reapplyClipMaskVisibility();
     updateClipMaskRendererState();
     leftPanel.addEventListener("keydown", (e) => {
       const tag = e.target.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") e.stopPropagation();
     });
+    try {
+      const saved = localStorage.getItem(RES_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mode) {
+          document.getElementById("tb-resolution").value = parsed.mode;
+          if (parsed.mode === "custom" && parsed.width && parsed.height) {
+            outputResolution = { width: parsed.width, height: parsed.height };
+            const resW = document.getElementById("tb-resW");
+            const resH = document.getElementById("tb-resH");
+            resW.value = String(parsed.width);
+            resH.value = String(parsed.height);
+            resW.style.display = "";
+            resH.style.display = "";
+          } else if (parsed.mode !== "auto" && parsed.mode !== "custom") {
+            const [w, h] = parsed.mode.split("x").map(Number);
+            if (w && h) outputResolution = { width: w, height: h };
+          }
+        }
+      }
+    } catch {
+    }
+    function calcOutputFrame() {
+      let res = outputResolution;
+      if (!res && autoDisplaySize) res = autoDisplaySize;
+      if (!res) {
+        baseMLMap2.outputFrame = null;
+        return;
+      }
+      const panelL = leftVisible ? 210 : 0;
+      const panelR = rightVisible ? 270 : 0;
+      const availW = window.innerWidth - panelL - panelR;
+      const availH = window.innerHeight - 38 - 48;
+      const oAspect = res.width / res.height;
+      const eAspect = availW / availH;
+      let fw, fh;
+      if (oAspect > eAspect) {
+        fw = availW * 0.9;
+        fh = fw / oAspect;
+      } else {
+        fh = availH * 0.9;
+        fw = fh * oAspect;
+      }
+      const fx = panelL + (availW - fw) / 2;
+      const fy = 38 + (availH - fh) / 2;
+      baseMLMap2.outputFrame = { x: fx, y: fy, w: fw, h: fh, resW: res.width, resH: res.height };
+      const needW = res.width;
+      const needH = res.height;
+      const zoomW = availW / needW;
+      const zoomH = availH / needH;
+      let autoZoom = Math.min(zoomW, zoomH) * 0.9;
+      autoZoom = Math.max(0.1, Math.min(1, autoZoom));
+      const currentZoom = parseInt(zoomSlider.value) / 100;
+      if (autoZoom < currentZoom) {
+        const pct = Math.round(autoZoom * 100);
+        zoomSlider.value = String(pct);
+        zoomLabel.textContent = `${pct}%`;
+        workspace.style.transform = autoZoom < 1 ? `scale(${autoZoom})` : "";
+        baseMLMap2.setWorkspaceZoom(autoZoom);
+        clipMaskRenderer.zoom = autoZoom;
+      }
+    }
+    function applyResolution() {
+      const sel = document.getElementById("tb-resolution").value;
+      const resW = document.getElementById("tb-resW");
+      const resH = document.getElementById("tb-resH");
+      if (sel === "auto") {
+        outputResolution = null;
+        resW.style.display = "none";
+        resH.style.display = "none";
+      } else if (sel === "custom") {
+        resW.style.display = "";
+        resH.style.display = "";
+        const w = parseInt(resW.value) || 0;
+        const h = parseInt(resH.value) || 0;
+        outputResolution = w > 0 && h > 0 ? { width: w, height: h } : null;
+      } else {
+        resW.style.display = "none";
+        resH.style.display = "none";
+        const [w, h] = sel.split("x").map(Number);
+        outputResolution = w && h ? { width: w, height: h } : null;
+      }
+      localStorage.setItem(RES_KEY, JSON.stringify({
+        mode: sel,
+        width: outputResolution?.width,
+        height: outputResolution?.height
+      }));
+      calcOutputFrame();
+    }
+    document.getElementById("tb-resolution").addEventListener("change", applyResolution);
+    document.getElementById("tb-resW").addEventListener("input", applyResolution);
+    document.getElementById("tb-resH").addEventListener("input", applyResolution);
+    document.getElementById("tb-resW").addEventListener("keydown", (e) => e.stopPropagation());
+    document.getElementById("tb-resH").addEventListener("keydown", (e) => e.stopPropagation());
+    window.addEventListener("resize", () => calcOutputFrame());
+    bridge.on("DISPLAY_RESIZE", (p) => {
+      autoDisplaySize = { width: p.width, height: p.height };
+      const sel = document.getElementById("tb-resolution").value;
+      if (sel === "auto") calcOutputFrame();
+    });
+    calcOutputFrame();
     checkLatestVersion().then((v) => {
       if (v.latest !== VERSION) {
         const titleEl = app.querySelector(".app-title");
@@ -2738,6 +2929,8 @@ ${options}`, "1");
       this.isLayerSoloed = false;
       this.snapEnabled = true;
       this.onSnapChanged = null;
+      this.outputFrame = null;
+      this.onSpaceBar = null;
       this.SNAP_THRESHOLD = 12;
       this.workspaceZoom = 1;
       // Rubber band selection state
@@ -3200,6 +3393,115 @@ ${options}`, "1");
         layer.element.parentElement?.appendChild(layer.element);
       }
     }
+    stretchToFrame(layer, frame) {
+      layer.targetPoints = [
+        [frame.x, frame.y],
+        [frame.x + frame.w, frame.y],
+        [frame.x + frame.w, frame.y + frame.h],
+        [frame.x, frame.y + frame.h]
+      ];
+      layer.sourcePoints = [
+        [0, 0],
+        [layer.width, 0],
+        [layer.width, layer.height],
+        [0, layer.height]
+      ];
+      this.updateTransform();
+      this.draw();
+      this.pushHistory();
+      if (this.autoSave) this.saveSettings();
+      this.layoutChangeListener();
+    }
+    fitToFrame(layer, frame) {
+      const layerAspect = layer.width / layer.height;
+      const frameAspect = frame.w / frame.h;
+      let fw, fh;
+      if (layerAspect > frameAspect) {
+        fw = frame.w;
+        fh = frame.w / layerAspect;
+      } else {
+        fh = frame.h;
+        fw = frame.h * layerAspect;
+      }
+      const fx = frame.x + (frame.w - fw) / 2;
+      const fy = frame.y + (frame.h - fh) / 2;
+      layer.targetPoints = [
+        [fx, fy],
+        [fx + fw, fy],
+        [fx + fw, fy + fh],
+        [fx, fy + fh]
+      ];
+      layer.sourcePoints = [
+        [0, 0],
+        [layer.width, 0],
+        [layer.width, layer.height],
+        [0, layer.height]
+      ];
+      this.updateTransform();
+      this.draw();
+      this.pushHistory();
+      if (this.autoSave) this.saveSettings();
+      this.layoutChangeListener();
+    }
+    exportTemplate(width, height) {
+      const c = document.createElement("canvas");
+      c.width = width;
+      c.height = height;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, width, height);
+      const frame = this.outputFrame;
+      let sx, sy, ox, oy;
+      if (frame && frame.w > 0 && frame.h > 0) {
+        sx = width / frame.w;
+        sy = height / frame.h;
+        ox = frame.x;
+        oy = frame.y;
+      } else {
+        sx = width / window.innerWidth;
+        sy = height / window.innerHeight;
+        ox = 0;
+        oy = 0;
+      }
+      ctx.lineWidth = 2;
+      for (const layer of this.layers) {
+        if (!layer.visible) continue;
+        ctx.strokeStyle = "white";
+        ctx.beginPath();
+        const tp = layer.targetPoints;
+        ctx.moveTo((tp[0][0] - ox) * sx, (tp[0][1] - oy) * sy);
+        for (let p = 1; p < tp.length; p++) {
+          ctx.lineTo((tp[p][0] - ox) * sx, (tp[p][1] - oy) * sy);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        let cx = 0, cy = 0;
+        for (const p of tp) {
+          cx += (p[0] - ox) * sx;
+          cy += (p[1] - oy) * sy;
+        }
+        cx /= 4;
+        cy /= 4;
+        const label = layer.element.id.toUpperCase();
+        ctx.font = `${Math.max(12, Math.round(16 * sx))}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.fillText(label, cx, cy + 5);
+      }
+      ctx.strokeStyle = "#b44dff";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(1, 1, width - 2, height - 2);
+      ctx.font = "14px sans-serif";
+      ctx.fillStyle = "#b44dff";
+      ctx.textAlign = "left";
+      ctx.fillText(`${width}x${height}`, 8, 20);
+      return c;
+    }
+    resetHistory() {
+      historyStack.length = 0;
+      redoStack.length = 0;
+      this.pushHistory();
+    }
     resetLayerTransform(layer) {
       const cx = window.innerWidth / 2;
       const cy = window.innerHeight / 2;
@@ -3333,6 +3635,20 @@ ${options}`, "1");
         this.context.font = "20px sans-serif";
         this.context.fillText(`${this.canvas.width} x ${this.canvas.height}`, this.canvas.width / 2, this.canvas.height / 2 + fontSize * 0.75);
         this.context.fillText("Display size", this.canvas.width / 2, this.canvas.height / 2 - fontSize * 0.75);
+      }
+      if (this.outputFrame) {
+        const f = this.outputFrame;
+        this.context.save();
+        this.context.strokeStyle = "#b44dff";
+        this.context.lineWidth = 2;
+        this.context.setLineDash([8, 6]);
+        this.context.strokeRect(f.x, f.y, f.w, f.h);
+        this.context.setLineDash([]);
+        this.context.font = "11px sans-serif";
+        this.context.fillStyle = "#b44dff";
+        this.context.textAlign = "left";
+        this.context.fillText(`${f.resW}x${f.resH}`, f.x + 4, f.y - 4);
+        this.context.restore();
       }
       if (this.rubberBandActive) {
         const rx = Math.min(this.rubberBandStart[0], this.rubberBandEnd[0]);
@@ -3626,7 +3942,9 @@ ${options}`, "1");
             this.setConfigEnabled(false);
             return;
           }
-          break;
+          event.preventDefault();
+          if (this.onSpaceBar) this.onSpaceBar();
+          return;
         case 37:
           delta[0] -= increment;
           break;

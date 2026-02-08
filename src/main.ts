@@ -34,6 +34,8 @@ export class MLMap {
     private isLayerSoloed = false;
     public snapEnabled = true;
     public onSnapChanged: ((enabled: boolean) => void) | null = null;
+    public outputFrame: { x: number; y: number; w: number; h: number; resW: number; resH: number } | null = null;
+    public onSpaceBar: (() => void) | null = null;
     private readonly SNAP_THRESHOLD = 12;
     public workspaceZoom = 1;
 
@@ -532,6 +534,123 @@ export class MLMap {
         }
     }
 
+    public stretchToFrame(layer: Types.Layer, frame: { x: number; y: number; w: number; h: number }): void {
+        layer.targetPoints = [
+            [frame.x, frame.y],
+            [frame.x + frame.w, frame.y],
+            [frame.x + frame.w, frame.y + frame.h],
+            [frame.x, frame.y + frame.h],
+        ];
+        layer.sourcePoints = [
+            [0, 0], [layer.width, 0],
+            [layer.width, layer.height], [0, layer.height],
+        ];
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public fitToFrame(layer: Types.Layer, frame: { x: number; y: number; w: number; h: number }): void {
+        const layerAspect = layer.width / layer.height;
+        const frameAspect = frame.w / frame.h;
+        let fw: number, fh: number;
+        if (layerAspect > frameAspect) {
+            fw = frame.w;
+            fh = frame.w / layerAspect;
+        } else {
+            fh = frame.h;
+            fw = frame.h * layerAspect;
+        }
+        const fx = frame.x + (frame.w - fw) / 2;
+        const fy = frame.y + (frame.h - fh) / 2;
+        layer.targetPoints = [
+            [fx, fy], [fx + fw, fy],
+            [fx + fw, fy + fh], [fx, fy + fh],
+        ];
+        layer.sourcePoints = [
+            [0, 0], [layer.width, 0],
+            [layer.width, layer.height], [0, layer.height],
+        ];
+        this.updateTransform();
+        this.draw();
+        this.pushHistory();
+        if (this.autoSave) this.saveSettings();
+        this.layoutChangeListener();
+    }
+
+    public exportTemplate(width: number, height: number): HTMLCanvasElement {
+        const c = document.createElement("canvas");
+        c.width = width;
+        c.height = height;
+        const ctx = c.getContext("2d")!;
+
+        // Black background
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, width, height);
+
+        // Scale from editor coordinates to output resolution
+        const frame = this.outputFrame;
+        let sx: number, sy: number, ox: number, oy: number;
+        if (frame && frame.w > 0 && frame.h > 0) {
+            sx = width / frame.w;
+            sy = height / frame.h;
+            ox = frame.x;
+            oy = frame.y;
+        } else {
+            sx = width / window.innerWidth;
+            sy = height / window.innerHeight;
+            ox = 0;
+            oy = 0;
+        }
+
+        ctx.lineWidth = 2;
+        for (const layer of this.layers) {
+            if (!layer.visible) continue;
+
+            // Draw layer outline
+            ctx.strokeStyle = "white";
+            ctx.beginPath();
+            const tp = layer.targetPoints;
+            ctx.moveTo((tp[0][0] - ox) * sx, (tp[0][1] - oy) * sy);
+            for (let p = 1; p < tp.length; p++) {
+                ctx.lineTo((tp[p][0] - ox) * sx, (tp[p][1] - oy) * sy);
+            }
+            ctx.closePath();
+            ctx.stroke();
+
+            // Draw label
+            let cx = 0, cy = 0;
+            for (const p of tp) { cx += (p[0] - ox) * sx; cy += (p[1] - oy) * sy; }
+            cx /= 4; cy /= 4;
+            const label = layer.element.id.toUpperCase();
+            ctx.font = `${Math.max(12, Math.round(16 * sx))}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillStyle = "rgba(255,255,255,0.7)";
+            ctx.fillText(label, cx, cy + 5);
+        }
+
+        // Draw border
+        ctx.strokeStyle = "#b44dff";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(1, 1, width - 2, height - 2);
+
+        // Draw resolution label
+        ctx.font = "14px sans-serif";
+        ctx.fillStyle = "#b44dff";
+        ctx.textAlign = "left";
+        ctx.fillText(`${width}x${height}`, 8, 20);
+
+        return c;
+    }
+
+    public resetHistory(): void {
+        historyStack.length = 0;
+        redoStack.length = 0;
+        this.pushHistory();
+    }
+
     public resetLayerTransform(layer: Types.Layer): void {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
@@ -688,6 +807,22 @@ export class MLMap {
             this.context.font = "20px sans-serif";
             this.context.fillText(`${this.canvas.width} x ${this.canvas.height}`, this.canvas.width / 2, this.canvas.height / 2 + (fontSize * 0.75));
             this.context.fillText("Display size", this.canvas.width / 2, this.canvas.height / 2 - (fontSize * 0.75));
+        }
+
+        // Draw output resolution frame
+        if (this.outputFrame) {
+            const f = this.outputFrame;
+            this.context.save();
+            this.context.strokeStyle = "#b44dff";
+            this.context.lineWidth = 2;
+            this.context.setLineDash([8, 6]);
+            this.context.strokeRect(f.x, f.y, f.w, f.h);
+            this.context.setLineDash([]);
+            this.context.font = "11px sans-serif";
+            this.context.fillStyle = "#b44dff";
+            this.context.textAlign = "left";
+            this.context.fillText(`${f.resW}x${f.resH}`, f.x + 4, f.y - 4);
+            this.context.restore();
         }
 
         // Draw rubber band selection rectangle
@@ -1008,7 +1143,9 @@ export class MLMap {
                     this.setConfigEnabled(false);
                     return;
                 }
-                break;
+                event.preventDefault();
+                if (this.onSpaceBar) this.onSpaceBar();
+                return;
 
             case 37: // left arrow.
                 delta[0] -= increment;

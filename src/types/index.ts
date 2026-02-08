@@ -76,7 +76,8 @@ export type ChannelMessageType =
     | "SEND_VIDEO_DATA"
     | "PING"
     | "DISPLAY_READY" | "PONG" | "SYNC_RESPONSE"
-    | "INIT_STATE";
+    | "INIT_STATE"
+    | "DISPLAY_RESIZE";
 
 export interface ChannelMessage {
     type: ChannelMessageType;

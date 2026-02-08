@@ -22,6 +22,7 @@ export function initVideoUI(
     registerVideoElement: (video: HTMLVideoElement) => void;
     setActiveVideo: (video: HTMLVideoElement) => void;
     getActiveVideo: () => HTMLVideoElement | null;
+    togglePlayPause: () => void;
 } {
     const sourceManager = new VideoSourceManager();
     const playlistManager = new PlaylistManager();
@@ -145,6 +146,9 @@ export function initVideoUI(
         else if (active && active.loop && localVideo) {
             localVideo.currentTime = 0;
             localVideo.play().catch(() => {});
+            // Sync loop restart to display
+            bridge.send("SEEK", { time: 0 });
+            bridge.send("PLAY");
         }
     }
 
@@ -601,6 +605,11 @@ export function initVideoUI(
         bridge.send("LOAD_PLAYLIST", { items, loop: active.loop, startIndex: localPlaylistIndex });
     }
 
+    function togglePlayPause(): void {
+        // Simulate clicking the play button (handles all the logic)
+        ($("tp-play") as HTMLButtonElement).click();
+    }
+
     // ---- INIT ----
     renderLibrary();
     renderPlaylistSelector();
@@ -614,5 +623,6 @@ export function initVideoUI(
         registerVideoElement,
         setActiveVideo,
         getActiveVideo: () => localVideo,
+        togglePlayPause,
     };
 }

@@ -85,37 +85,6 @@ Press `SHIFT + Space` to toggle edit mode.
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Y` |
 | Context menu | Right-click on layer |
 
-## Architecture
-
-```
-src/
-  main.ts              Core MLMap class (layers, transforms, undo/redo, snap)
-  uiControls/
-    index.ts            Main UI (grid layout, panels, toolbar, context menu)
-    videoPanel.ts       Media library, playlists, transport bar, audio routing
-  display/
-    renderer.ts         Output window renderer (receives commands via BroadcastChannel)
-  channel/
-    index.ts            BroadcastChannel bridge (control <-> display communication)
-    protocol.ts         Message types and intervals
-  video/
-    sources.ts          Video source manager (files, URLs, captures, webcams)
-    playlist.ts         Playlist manager
-    clipMaskRenderer.ts Canvas-based clip mask renderer
-  utils/
-    workflow.ts         Import/export workflows (.mlmap files, shareable URLs)
-    storage.ts          LocalStorage workspace persistence
-    transform.ts        CSS matrix3d transform utilities
-  types/
-    index.ts            TypeScript type definitions
-  lib/
-    data.ts             Version and global constants
-
-dist/
-  mlmap.js              Editor bundle
-  mlmap-display.js      Output window bundle
-```
-
 Build uses esbuild via `build.js` (supports `--watch` and `--minify` flags).
 
 ## Author

@@ -366,6 +366,11 @@
           this.syncTimer = window.setInterval(() => {
             this.bridge.send("SYNC_RESPONSE", this.getState());
           }, SYNC_INTERVAL);
+          const sendResize = () => {
+            this.bridge.send("DISPLAY_RESIZE", { width: window.innerWidth, height: window.innerHeight });
+          };
+          window.addEventListener("resize", sendResize);
+          document.addEventListener("fullscreenchange", sendResize);
         }
         getClipGroups() {
           const groups = [];

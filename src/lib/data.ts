@@ -1,5 +1,5 @@
 // ------------------- Global variables -------------------
-export const VERSION = "0.1.0.0";
+export const VERSION = "0.1.0.1";
 export let historyStack: string[] = [];
 export let redoStack: string[] = [];
 export const historyLimit = 50;

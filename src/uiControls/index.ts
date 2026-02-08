@@ -350,6 +350,9 @@ export function initUIControls(baseMLMap: MLMap) {
     // ---- STATE ----
     let managedLayers: Types.ManagedLayer[] = [];
     const MANAGED_LAYERS_KEY = "mlmap.managedLayers";
+    const RES_KEY = "mlmap:outputResolution";
+    let outputResolution: { width: number; height: number } | null = null;
+    let autoDisplaySize: { width: number; height: number } | null = null;
     // ---- CLIP MASK RENDERER ----
     const clipMaskRenderer = new ClipMaskRenderer(() => getClipGroups());
 
@@ -419,10 +422,24 @@ export function initUIControls(baseMLMap: MLMap) {
                 <span id="tb-zoomLabel" style="font-size:10px;color:#888;min-width:30px;">100%</span>
             </div>
             <div class="toolbar-group">
+                <span style="font-size:10px;color:#666;">Output</span>
+                <select id="tb-resolution" class="mlmap-select" title="Output resolution" style="max-width:130px;">
+                    <option value="auto">Auto</option>
+                    <option value="1920x1080">1920x1080</option>
+                    <option value="1280x720">1280x720</option>
+                    <option value="3840x2160">3840x2160</option>
+                    <option value="1024x768">1024x768</option>
+                    <option value="custom">Custom...</option>
+                </select>
+                <input id="tb-resW" class="mlmap-input" type="number" style="width:50px;display:none;" placeholder="W">
+                <input id="tb-resH" class="mlmap-input" type="number" style="width:50px;display:none;" placeholder="H">
+            </div>
+            <div class="toolbar-group">
                 <select id="tb-monitor" class="mlmap-select" title="Select output monitor" style="max-width:140px;">
                     <option value="">Monitor...</option>
                 </select>
                 <button id="tb-launch" class="mlmap-btn mlmap-btn-primary">Launch Output</button>
+                <button id="tb-exportTpl" class="mlmap-btn" title="Export layout template as image">TPL</button>
                 <button id="tb-fullscreen" class="mlmap-btn" title="Fullscreen output">FS</button>
                 <span class="status-dot disconnected" id="tb-status" title="Display disconnected"></span>
                 <button id="tb-toggleRight" class="mlmap-btn" title="Toggle media panel" style="font-size:10px;padding:4px 5px;">&raquo;</button>
@@ -485,6 +502,7 @@ export function initUIControls(baseMLMap: MLMap) {
         <div class="mlmap-section" style="border-bottom:none;">
             <div class="mlmap-section-title">Shortcuts</div>
             <pre style="font-size:10px;color:#666;margin:0;white-space:pre-wrap;line-height:1.5;">SHIFT+Space: Toggle edit mode
+Space: Play/Pause video
 Drag: Move | SHIFT+Drag: Precise
 ALT+Drag: Rotate/Scale
 Ctrl+Click: Multi-select layers
@@ -512,16 +530,44 @@ G: Toggle snap | Right-click: Menu</pre>
             .catch(() => {});
     }
 
+    // ---- LAYOUT REMAPPING (editor coords → display coords) ----
+    function getDisplayLayout(): any[] {
+        const layout = baseMLMap.getLayout();
+        const frame = baseMLMap.outputFrame;
+        if (!frame || frame.w <= 0 || frame.h <= 0) return layout;
+        // Remap targetPoints from editor frame space to output resolution space
+        const sx = frame.resW / frame.w;
+        const sy = frame.resH / frame.h;
+        return layout.map((item: any) => ({
+            ...item,
+            targetPoints: item.targetPoints.map((p: number[]) => [
+                (p[0] - frame.x) * sx,
+                (p[1] - frame.y) * sy,
+            ]),
+        }));
+    }
+
+    function sendLayoutToDisplay(): void {
+        bridge.send("UPDATE_LAYOUT", { layout: getDisplayLayout() });
+    }
+
     // ---- LAYER MANAGEMENT ----
+    function getVideoLayerSize(): { w: number; h: number } {
+        // Use output resolution for native-quality rendering; fallback to 1920x1080
+        const res = outputResolution || autoDisplaySize;
+        return res ? { w: res.width, h: res.height } : { w: 1920, h: 1080 };
+    }
+
     function onAddVideoLayer(url: string, name: string, stream?: MediaStream): void {
         const id = `vlayer_${Date.now()}`;
+        const vSize = getVideoLayerSize();
         const div = document.createElement("div");
         div.id = id;
         div.style.position = "fixed";
         div.style.top = "0px";
         div.style.left = "0px";
-        div.style.width = "400px";
-        div.style.height = "300px";
+        div.style.width = vSize.w + "px";
+        div.style.height = vSize.h + "px";
         div.style.overflow = "hidden";
         div.style.background = "#000";
 
@@ -560,21 +606,21 @@ G: Toggle snap | Right-click: Menu</pre>
 
         workspace.appendChild(div);
 
-        // Center on screen
+        // Center on screen - show at a reasonable visual size (400x300 on screen)
         const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
         baseMLMap.addLayer(div, [[cx - 200, cy - 150], [cx + 200, cy - 150], [cx + 200, cy + 150], [cx - 200, cy + 150]]);
 
         // Register with transport for local playback control
         videoCtrl.registerVideoElement(video);
 
-        const layerInfo: Types.ManagedLayer = { id, name, type: "video", videoUrl: stream ? undefined : url, width: 400, height: 300 };
+        const layerInfo: Types.ManagedLayer = { id, name, type: "video", videoUrl: stream ? undefined : url, width: vSize.w, height: vSize.h };
         managedLayers.push(layerInfo);
         saveManagedLayers();
         renderLayerList();
 
         bridge.send("ADD_LAYER", layerInfo);
         if (!stream && url) sendVideoDataToDisplay(id, url);
-        setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() }), 100);
+        setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
     function createShape(type: "square" | "circle" | "triangle"): void {
@@ -617,7 +663,7 @@ G: Toggle snap | Right-click: Menu</pre>
         renderLayerList();
 
         bridge.send("ADD_LAYER", layerInfo);
-        setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() }), 100);
+        setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
     function createIframeLayer(url: string): void {
@@ -654,7 +700,7 @@ G: Toggle snap | Right-click: Menu</pre>
         renderLayerList();
 
         bridge.send("ADD_LAYER", layerInfo);
-        setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() }), 100);
+        setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
     function deleteLayer(id: string): void {
@@ -888,6 +934,13 @@ G: Toggle snap | Right-click: Menu</pre>
         const div = document.getElementById(layerId);
         if (!div) return;
 
+        // Upgrade to high-res native size
+        const vSize = getVideoLayerSize();
+        div.style.width = vSize.w + "px";
+        div.style.height = vSize.h + "px";
+        ml.width = vSize.w;
+        ml.height = vSize.h;
+
         // Clear placeholder
         div.innerHTML = "";
         div.style.background = "#000";
@@ -920,7 +973,7 @@ G: Toggle snap | Right-click: Menu</pre>
 
         bridge.send("ADD_LAYER", ml);
         sendVideoDataToDisplay(layerId, url);
-        setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() }), 100);
+        setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
     function assignCaptureToLayer(layerId: string, stream: MediaStream, name: string): void {
@@ -929,6 +982,13 @@ G: Toggle snap | Right-click: Menu</pre>
 
         const div = document.getElementById(layerId);
         if (!div) return;
+
+        // Upgrade to high-res native size
+        const vSize = getVideoLayerSize();
+        div.style.width = vSize.w + "px";
+        div.style.height = vSize.h + "px";
+        ml.width = vSize.w;
+        ml.height = vSize.h;
 
         div.innerHTML = "";
         div.style.background = "#000";
@@ -971,7 +1031,7 @@ G: Toggle snap | Right-click: Menu</pre>
         }
 
         bridge.send("ADD_LAYER", ml);
-        setTimeout(() => bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() }), 100);
+        setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
     // ---- SHAPE BUTTONS ----
@@ -1046,6 +1106,13 @@ G: Toggle snap | Right-click: Menu</pre>
                     <div class="ctx-item" data-action="resetTransform">Reset Transform</div>
                 </div>
             </div>
+            <div class="ctx-has-sub">
+                <div class="ctx-item">Fit to Output<span class="ctx-arrow">\u25B6</span></div>
+                <div class="ctx-submenu">
+                    <div class="ctx-item" data-action="fitOutput">Fit to Output</div>
+                    <div class="ctx-item" data-action="stretchOutput">Stretch to Output</div>
+                </div>
+            </div>
             <div class="ctx-sep"></div>
             ${clipLabel ? `<div class="ctx-item" data-action="toggleClip">${clipLabel}</div><div class="ctx-sep"></div>` : ""}
             <div class="ctx-item" data-action="solo">Solo / Unsolo<span class="shortcut">S</span></div>
@@ -1091,6 +1158,16 @@ G: Toggle snap | Right-click: Menu</pre>
                     case "scaleUp": baseMLMap.scaleLayerPublic(layer, 1.1); break;
                     case "scaleDown": baseMLMap.scaleLayerPublic(layer, 0.9); break;
                     case "resetTransform": baseMLMap.resetLayerTransform(layer); break;
+                    case "fitOutput": {
+                        const frame = baseMLMap.outputFrame || { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+                        baseMLMap.fitToFrame(layer, frame);
+                        break;
+                    }
+                    case "stretchOutput": {
+                        const frame = baseMLMap.outputFrame || { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+                        baseMLMap.stretchToFrame(layer, frame);
+                        break;
+                    }
                     case "toggleClip":
                         if (isClipped) releaseClipMask(layerId);
                         else createClipMask(layerId);
@@ -1359,6 +1436,20 @@ G: Toggle snap | Right-click: Menu</pre>
         bridge.send("FULLSCREEN_ENTER");
     });
 
+    document.getElementById("tb-exportTpl")!.addEventListener("click", () => {
+        const res = outputResolution || autoDisplaySize || { width: window.innerWidth, height: window.innerHeight };
+        const canvas = baseMLMap.exportTemplate(res.width, res.height);
+        canvas.toBlob((blob) => {
+            if (!blob) return;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `mlmap-template-${res.width}x${res.height}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }, "image/png");
+    });
+
     bridge.onConnectionChanged = (connected: boolean) => {
         const dot = document.getElementById("tb-status")!;
         dot.className = connected ? "status-dot connected" : "status-dot disconnected";
@@ -1368,7 +1459,7 @@ G: Toggle snap | Right-click: Menu</pre>
     bridge.on("DISPLAY_READY", () => {
         managedLayers.forEach(layer => bridge.send("ADD_LAYER", layer));
         setTimeout(() => {
-            bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() });
+            sendLayoutToDisplay();
             videoCtrl.sendPlaylistToDisplay();
             // Send video data for layers with blob URLs (can't be loaded cross-window)
             managedLayers.forEach(layer => {
@@ -1426,11 +1517,13 @@ G: Toggle snap | Right-click: Menu</pre>
     document.getElementById("tb-toggleLeft")!.addEventListener("click", () => {
         leftVisible = !leftVisible;
         updatePanelLayout();
+        calcOutputFrame();
     });
 
     document.getElementById("tb-toggleRight")!.addEventListener("click", () => {
         rightVisible = !rightVisible;
         updatePanelLayout();
+        calcOutputFrame();
     });
 
     // ---- WORKSPACE ZOOM ----
@@ -1478,6 +1571,7 @@ G: Toggle snap | Right-click: Menu</pre>
         }
     }
     baseMLMap.onAfterDraw = reapplyClipMaskVisibility;
+    baseMLMap.onSpaceBar = () => videoCtrl.togglePlayPause();
 
     // ---- LAYOUT CHANGE LISTENER ----
     baseMLMap.layoutChangeListener = () => {
@@ -1485,7 +1579,7 @@ G: Toggle snap | Right-click: Menu</pre>
             activeWorkspace.layout = baseMLMap.getLayout();
             storage.saveWorkspace(activeWorkspace);
         }
-        bridge.send("UPDATE_LAYOUT", { layout: baseMLMap.getLayout() });
+        sendLayoutToDisplay();
     };
 
     // ---- VIDEO SYNC ----
@@ -1525,6 +1619,9 @@ G: Toggle snap | Right-click: Menu</pre>
         baseMLMap.setLayout(activeWorkspace.layout);
     }
 
+    // Reset history so the initial state is the current layout (not an empty snapshot)
+    baseMLMap.resetHistory();
+
     // Restore clip mask visual state after layers are loaded
     reapplyClipMaskVisibility();
     updateClipMaskRendererState();
@@ -1533,6 +1630,134 @@ G: Toggle snap | Right-click: Menu</pre>
         const tag = (e.target as HTMLElement).tagName;
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") e.stopPropagation();
     });
+
+    // ---- OUTPUT RESOLUTION FRAME ----
+    // Load saved resolution
+    try {
+        const saved = localStorage.getItem(RES_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.mode) {
+                (document.getElementById("tb-resolution") as HTMLSelectElement).value = parsed.mode;
+                if (parsed.mode === "custom" && parsed.width && parsed.height) {
+                    outputResolution = { width: parsed.width, height: parsed.height };
+                    const resW = document.getElementById("tb-resW") as HTMLInputElement;
+                    const resH = document.getElementById("tb-resH") as HTMLInputElement;
+                    resW.value = String(parsed.width);
+                    resH.value = String(parsed.height);
+                    resW.style.display = "";
+                    resH.style.display = "";
+                } else if (parsed.mode !== "auto" && parsed.mode !== "custom") {
+                    const [w, h] = parsed.mode.split("x").map(Number);
+                    if (w && h) outputResolution = { width: w, height: h };
+                }
+            }
+        }
+    } catch { /* ignore */ }
+
+    function calcOutputFrame(): void {
+        let res = outputResolution;
+        if (!res && autoDisplaySize) res = autoDisplaySize;
+        if (!res) {
+            baseMLMap.outputFrame = null;
+            return;
+        }
+        // Visible workspace area (subtract panels, toolbar 38px, transport 48px)
+        const panelL = leftVisible ? 210 : 0;
+        const panelR = rightVisible ? 270 : 0;
+        const availW = window.innerWidth - panelL - panelR;
+        const availH = window.innerHeight - 38 - 48;
+        const oAspect = res.width / res.height;
+        const eAspect = availW / availH;
+
+        // Fit frame within 90% of available workspace
+        let fw: number, fh: number;
+        if (oAspect > eAspect) {
+            fw = availW * 0.9;
+            fh = fw / oAspect;
+        } else {
+            fh = availH * 0.9;
+            fw = fh * oAspect;
+        }
+
+        // Center the frame in the visible workspace area (in full window coords)
+        const fx = panelL + (availW - fw) / 2;
+        const fy = 38 + (availH - fh) / 2;
+        baseMLMap.outputFrame = { x: fx, y: fy, w: fw, h: fh, resW: res.width, resH: res.height };
+
+        // Auto-zoom: if the frame at zoom=1 would overflow, reduce zoom to fit
+        // The frame is already sized to fit at zoom=1, but the canvas draws with
+        // zoom scaling centered on viewport center, so we need to ensure the frame
+        // is fully visible after the zoom transform.
+        // Compute the zoom needed for the output resolution to fit in the visible area.
+        const needW = res.width;
+        const needH = res.height;
+        const zoomW = availW / needW;
+        const zoomH = availH / needH;
+        let autoZoom = Math.min(zoomW, zoomH) * 0.9; // 90% margin
+        autoZoom = Math.max(0.1, Math.min(1, autoZoom)); // clamp to [0.1, 1]
+
+        // Only reduce zoom, never increase above current if user zoomed out more
+        const currentZoom = parseInt(zoomSlider.value) / 100;
+        if (autoZoom < currentZoom) {
+            const pct = Math.round(autoZoom * 100);
+            zoomSlider.value = String(pct);
+            zoomLabel.textContent = `${pct}%`;
+            workspace.style.transform = autoZoom < 1 ? `scale(${autoZoom})` : "";
+            baseMLMap.setWorkspaceZoom(autoZoom);
+            clipMaskRenderer.zoom = autoZoom;
+        }
+    }
+
+    function applyResolution(): void {
+        const sel = (document.getElementById("tb-resolution") as HTMLSelectElement).value;
+        const resW = document.getElementById("tb-resW") as HTMLInputElement;
+        const resH = document.getElementById("tb-resH") as HTMLInputElement;
+
+        if (sel === "auto") {
+            outputResolution = null;
+            resW.style.display = "none";
+            resH.style.display = "none";
+        } else if (sel === "custom") {
+            resW.style.display = "";
+            resH.style.display = "";
+            const w = parseInt(resW.value) || 0;
+            const h = parseInt(resH.value) || 0;
+            outputResolution = (w > 0 && h > 0) ? { width: w, height: h } : null;
+        } else {
+            resW.style.display = "none";
+            resH.style.display = "none";
+            const [w, h] = sel.split("x").map(Number);
+            outputResolution = (w && h) ? { width: w, height: h } : null;
+        }
+
+        localStorage.setItem(RES_KEY, JSON.stringify({
+            mode: sel,
+            width: outputResolution?.width,
+            height: outputResolution?.height,
+        }));
+        calcOutputFrame();
+    }
+
+    (document.getElementById("tb-resolution") as HTMLSelectElement).addEventListener("change", applyResolution);
+    (document.getElementById("tb-resW") as HTMLInputElement).addEventListener("input", applyResolution);
+    (document.getElementById("tb-resH") as HTMLInputElement).addEventListener("input", applyResolution);
+    // Stop key propagation from resolution inputs
+    (document.getElementById("tb-resW") as HTMLInputElement).addEventListener("keydown", (e) => e.stopPropagation());
+    (document.getElementById("tb-resH") as HTMLInputElement).addEventListener("keydown", (e) => e.stopPropagation());
+
+    // Recalc frame on window resize
+    window.addEventListener("resize", () => calcOutputFrame());
+
+    // Handle DISPLAY_RESIZE from output window
+    bridge.on("DISPLAY_RESIZE", (p: { width: number; height: number }) => {
+        autoDisplaySize = { width: p.width, height: p.height };
+        const sel = (document.getElementById("tb-resolution") as HTMLSelectElement).value;
+        if (sel === "auto") calcOutputFrame();
+    });
+
+    // Initial frame calculation
+    calcOutputFrame();
 
     checkLatestVersion().then(v => {
         if (v.latest !== VERSION) {

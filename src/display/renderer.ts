@@ -28,6 +28,13 @@ export class DisplayRenderer {
         this.syncTimer = window.setInterval(() => {
             this.bridge.send("SYNC_RESPONSE", this.getState());
         }, SYNC_INTERVAL);
+
+        // Send display size to editor on resize and fullscreen changes
+        const sendResize = () => {
+            this.bridge.send("DISPLAY_RESIZE", { width: window.innerWidth, height: window.innerHeight });
+        };
+        window.addEventListener("resize", sendResize);
+        document.addEventListener("fullscreenchange", sendResize);
     }
 
     private getClipGroups(): ClipGroup[] {
