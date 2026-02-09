@@ -47,6 +47,12 @@ export function initVideoUI(
                 <button id="vp-capture" class="mlmap-btn" style="flex:1;">Screen capture...</button>
                 <button id="vp-webcam" class="mlmap-btn" style="flex:1;">Webcam...</button>
             </div>
+            <div style="display:flex;align-items:center;gap:4px;margin-bottom:6px;">
+                <label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input id="vp-showCursor" type="checkbox" style="margin:0;">
+                    Show cursor in capture
+                </label>
+            </div>
             <div id="vp-library"></div>
         </div>
         <div class="mlmap-section">
@@ -194,10 +200,21 @@ export function initVideoUI(
         }
     });
 
+    // Cursor toggle persistence
+    const cursorCheckbox = $("vp-showCursor") as HTMLInputElement;
+    cursorCheckbox.checked = localStorage.getItem("mlmap:showCursor") !== "false";
+    cursorCheckbox.addEventListener("change", () => {
+        localStorage.setItem("mlmap:showCursor", String(cursorCheckbox.checked));
+    });
+
     // Screen Capture
     $("vp-capture").addEventListener("click", async () => {
         try {
-            const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            const cursor = cursorCheckbox.checked ? "always" : "never";
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor } as any,
+                audio: true,
+            });
             const track = stream.getVideoTracks()[0];
             const label = track?.label || "Screen Capture";
             const src = sourceManager.addCapture(stream, label);

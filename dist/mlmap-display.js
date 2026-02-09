@@ -359,6 +359,7 @@
           this.playlistLoop = true;
           this.currentName = null;
           this.layoutData = [];
+          this.streamPCs = /* @__PURE__ */ new Map();
           this.bridge = new ChannelBridge("display");
           this.clipMaskRenderer = new ClipMaskRenderer(() => this.getClipGroups());
           document.body.appendChild(this.clipMaskRenderer.canvasElement);
@@ -443,6 +444,11 @@
             this.updateClipMaskState();
           });
           this.bridge.on("REMOVE_LAYER", (p) => {
+            const pc = this.streamPCs.get(p.id);
+            if (pc) {
+              pc.close();
+              this.streamPCs.delete(p.id);
+            }
             const el = this.layers.get(p.id);
             if (el) {
               el.remove();
@@ -527,6 +533,33 @@
             video.src = url;
             video.load();
             this.updateClipMaskState();
+          });
+          this.bridge.on("RTC_OFFER", async (p) => {
+            const oldPc = this.streamPCs.get(p.layerId);
+            if (oldPc) oldPc.close();
+            const pc = new RTCPeerConnection();
+            this.streamPCs.set(p.layerId, pc);
+            pc.ontrack = (e) => {
+              const video = this.videoElements.get(p.layerId);
+              if (video) {
+                video.srcObject = e.streams[0] || new MediaStream([e.track]);
+                video.autoplay = true;
+                video.play().catch(() => {
+                });
+              }
+              this.updateClipMaskState();
+            };
+            await pc.setRemoteDescription(p.sdp);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            if (pc.iceGatheringState !== "complete") {
+              await new Promise((r) => {
+                pc.addEventListener("icegatheringstatechange", () => {
+                  if (pc.iceGatheringState === "complete") r();
+                });
+              });
+            }
+            this.bridge.send("RTC_ANSWER", { layerId: p.layerId, sdp: pc.localDescription.toJSON() });
           });
           this.bridge.on("INIT_STATE", (p) => {
             if (p.layers) {

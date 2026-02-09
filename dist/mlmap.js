@@ -611,6 +611,12 @@
                 <button id="vp-capture" class="mlmap-btn" style="flex:1;">Screen capture...</button>
                 <button id="vp-webcam" class="mlmap-btn" style="flex:1;">Webcam...</button>
             </div>
+            <div style="display:flex;align-items:center;gap:4px;margin-bottom:6px;">
+                <label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input id="vp-showCursor" type="checkbox" style="margin:0;">
+                    Show cursor in capture
+                </label>
+            </div>
             <div id="vp-library"></div>
         </div>
         <div class="mlmap-section">
@@ -746,9 +752,18 @@
         input.value = "";
       }
     });
+    const cursorCheckbox = $("vp-showCursor");
+    cursorCheckbox.checked = localStorage.getItem("mlmap:showCursor") !== "false";
+    cursorCheckbox.addEventListener("change", () => {
+      localStorage.setItem("mlmap:showCursor", String(cursorCheckbox.checked));
+    });
     $("vp-capture").addEventListener("click", async () => {
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        const cursor = cursorCheckbox.checked ? "always" : "never";
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor },
+          audio: true
+        });
         const track = stream.getVideoTracks()[0];
         const label = track?.label || "Screen Capture";
         const src = sourceManager.addCapture(stream, label);
@@ -1705,6 +1720,36 @@ ${options}`, "1");
     document.head.appendChild(style);
     const bridge = new ChannelBridge("control");
     let displayWindow = null;
+    const liveStreams = /* @__PURE__ */ new Map();
+    const streamPCs = /* @__PURE__ */ new Map();
+    function waitForIceGathering(pc) {
+      if (pc.iceGatheringState === "complete") return Promise.resolve();
+      return new Promise((r) => {
+        pc.addEventListener("icegatheringstatechange", () => {
+          if (pc.iceGatheringState === "complete") r();
+        });
+      });
+    }
+    async function sendStreamViaRTC(layerId) {
+      const stream = liveStreams.get(layerId);
+      if (!stream) return;
+      const oldPc = streamPCs.get(layerId);
+      if (oldPc) {
+        oldPc.close();
+        streamPCs.delete(layerId);
+      }
+      const pc = new RTCPeerConnection();
+      streamPCs.set(layerId, pc);
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
+      bridge.send("RTC_OFFER", { layerId, sdp: pc.localDescription.toJSON() });
+    }
+    bridge.on("RTC_ANSWER", async (p) => {
+      const pc = streamPCs.get(p.layerId);
+      if (pc) await pc.setRemoteDescription(p.sdp);
+    });
     let managedLayers = [];
     const MANAGED_LAYERS_KEY2 = "mlmap.managedLayers";
     const RES_KEY = "mlmap:outputResolution";
@@ -1910,6 +1955,7 @@ G: Toggle snap | Right-click: Menu</pre>
         stream.getTracks().forEach((track) => {
           track.addEventListener("ended", () => {
             if (stream.getTracks().every((t) => t.readyState === "ended")) {
+              liveStreams.delete(id);
               video.srcObject = null;
               div.innerHTML = "";
               const ph = document.createElement("div");
@@ -1931,7 +1977,12 @@ G: Toggle snap | Right-click: Menu</pre>
       saveManagedLayers();
       renderLayerList();
       bridge.send("ADD_LAYER", layerInfo);
-      if (!stream && url) sendVideoDataToDisplay(id, url);
+      if (stream) {
+        liveStreams.set(id, stream);
+        setTimeout(() => sendStreamViaRTC(id), 200);
+      } else if (url) {
+        sendVideoDataToDisplay(id, url);
+      }
       setTimeout(() => sendLayoutToDisplay(), 100);
     }
     function createShape(type) {
@@ -2003,6 +2054,12 @@ G: Toggle snap | Right-click: Menu</pre>
       });
       const ml = managedLayers.find((l) => l.id === id);
       if (ml?.clipTo) releaseClipMask(id);
+      liveStreams.delete(id);
+      const pc = streamPCs.get(id);
+      if (pc) {
+        pc.close();
+        streamPCs.delete(id);
+      }
       const el = document.getElementById(id);
       if (el) el.remove();
       managedLayers = managedLayers.filter((l) => l.id !== id);
@@ -2251,6 +2308,7 @@ G: Toggle snap | Right-click: Menu</pre>
       stream.getTracks().forEach((track) => {
         track.addEventListener("ended", () => {
           if (stream.getTracks().every((t) => t.readyState === "ended")) {
+            liveStreams.delete(layerId);
             video.srcObject = null;
             div.innerHTML = "";
             const ph = document.createElement("div");
@@ -2270,7 +2328,9 @@ G: Toggle snap | Right-click: Menu</pre>
       if (managedLayers.some((l) => l.clipTo === layerId)) {
         updateClipMaskRendererState();
       }
+      liveStreams.set(layerId, stream);
       bridge.send("ADD_LAYER", ml);
+      setTimeout(() => sendStreamViaRTC(layerId), 200);
       setTimeout(() => sendLayoutToDisplay(), 100);
     }
     document.getElementById("lp-addSquare").addEventListener("click", () => createShape("square"));
@@ -2445,7 +2505,11 @@ G: Toggle snap | Right-click: Menu</pre>
             case "assignCapture": {
               (async () => {
                 try {
-                  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                  const cursor = localStorage.getItem("mlmap:showCursor") !== "false" ? "always" : "never";
+                  const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { cursor },
+                    audio: true
+                  });
                   const track = stream.getVideoTracks()[0];
                   const capName = track?.label || "Screen Capture";
                   assignCaptureToLayer(layerId, stream, capName);
@@ -2676,10 +2740,14 @@ ${options}`, "1");
         videoCtrl.sendPlaylistToDisplay();
         managedLayers.forEach((layer) => {
           if (layer.type === "video") {
-            const el = document.getElementById(layer.id);
-            const video = el?.querySelector("video");
-            if (video && video.src && video.src.startsWith("blob:")) {
-              sendVideoDataToDisplay(layer.id, video.src);
+            if (liveStreams.has(layer.id)) {
+              sendStreamViaRTC(layer.id);
+            } else {
+              const el = document.getElementById(layer.id);
+              const video = el?.querySelector("video");
+              if (video && video.src && video.src.startsWith("blob:")) {
+                sendVideoDataToDisplay(layer.id, video.src);
+              }
             }
           }
         });

@@ -347,6 +347,41 @@ export function initUIControls(baseMLMap: MLMap) {
     const bridge = new ChannelBridge("control");
     let displayWindow: Window | null = null;
 
+    // ---- LIVE STREAM SHARING (screen capture / webcam → display window via WebRTC) ----
+    // MediaStream objects can't be serialized via BroadcastChannel.
+    // We use WebRTC PeerConnection with BroadcastChannel as signaling channel.
+    // Non-trickle ICE: we wait for all candidates before sending SDP (fast for local connections).
+    const liveStreams = new Map<string, MediaStream>();
+    const streamPCs = new Map<string, RTCPeerConnection>();
+
+    function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
+        if (pc.iceGatheringState === "complete") return Promise.resolve();
+        return new Promise(r => {
+            pc.addEventListener("icegatheringstatechange", () => {
+                if (pc.iceGatheringState === "complete") r();
+            });
+        });
+    }
+
+    async function sendStreamViaRTC(layerId: string): Promise<void> {
+        const stream = liveStreams.get(layerId);
+        if (!stream) return;
+        const oldPc = streamPCs.get(layerId);
+        if (oldPc) { oldPc.close(); streamPCs.delete(layerId); }
+        const pc = new RTCPeerConnection();
+        streamPCs.set(layerId, pc);
+        stream.getTracks().forEach(t => pc.addTrack(t, stream));
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGathering(pc);
+        bridge.send("RTC_OFFER", { layerId, sdp: pc.localDescription!.toJSON() });
+    }
+
+    bridge.on("RTC_ANSWER", async (p: { layerId: string; sdp: RTCSessionDescriptionInit }) => {
+        const pc = streamPCs.get(p.layerId);
+        if (pc) await pc.setRemoteDescription(p.sdp);
+    });
+
     // ---- STATE ----
     let managedLayers: Types.ManagedLayer[] = [];
     const MANAGED_LAYERS_KEY = "mlmap.managedLayers";
@@ -586,11 +621,12 @@ G: Toggle snap | Right-click: Menu</pre>
         video.playsInline = true;
         div.appendChild(video);
 
-        // When capture stream ends, show placeholder
+        // When capture stream ends, show placeholder and clean up
         if (stream) {
             stream.getTracks().forEach(track => {
                 track.addEventListener("ended", () => {
                     if (stream.getTracks().every(t => t.readyState === "ended")) {
+                        liveStreams.delete(id);
                         video.srcObject = null;
                         div.innerHTML = "";
                         const ph = document.createElement("div");
@@ -619,7 +655,12 @@ G: Toggle snap | Right-click: Menu</pre>
         renderLayerList();
 
         bridge.send("ADD_LAYER", layerInfo);
-        if (!stream && url) sendVideoDataToDisplay(id, url);
+        if (stream) {
+            liveStreams.set(id, stream);
+            setTimeout(() => sendStreamViaRTC(id), 200);
+        } else if (url) {
+            sendVideoDataToDisplay(id, url);
+        }
         setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
@@ -709,6 +750,9 @@ G: Toggle snap | Right-click: Menu</pre>
         // Also release this layer's own clip mask
         const ml = managedLayers.find(l => l.id === id);
         if (ml?.clipTo) releaseClipMask(id);
+        liveStreams.delete(id);
+        const pc = streamPCs.get(id);
+        if (pc) { pc.close(); streamPCs.delete(id); }
         const el = document.getElementById(id);
         if (el) el.remove();
         managedLayers = managedLayers.filter(l => l.id !== id);
@@ -1003,10 +1047,11 @@ G: Toggle snap | Right-click: Menu</pre>
         video.playsInline = true;
         div.appendChild(video);
 
-        // When capture ends, show placeholder
+        // When capture ends, show placeholder and clean up
         stream.getTracks().forEach(track => {
             track.addEventListener("ended", () => {
                 if (stream.getTracks().every(t => t.readyState === "ended")) {
+                    liveStreams.delete(layerId);
                     video.srcObject = null;
                     div.innerHTML = "";
                     const ph = document.createElement("div");
@@ -1030,7 +1075,9 @@ G: Toggle snap | Right-click: Menu</pre>
             updateClipMaskRendererState();
         }
 
+        liveStreams.set(layerId, stream);
         bridge.send("ADD_LAYER", ml);
+        setTimeout(() => sendStreamViaRTC(layerId), 200);
         setTimeout(() => sendLayoutToDisplay(), 100);
     }
 
@@ -1197,7 +1244,11 @@ G: Toggle snap | Right-click: Menu</pre>
                     case "assignCapture": {
                         (async () => {
                             try {
-                                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                                const cursor = localStorage.getItem("mlmap:showCursor") !== "false" ? "always" : "never";
+                                const stream = await navigator.mediaDevices.getDisplayMedia({
+                                    video: { cursor } as any,
+                                    audio: true,
+                                });
                                 const track = stream.getVideoTracks()[0];
                                 const capName = track?.label || "Screen Capture";
                                 assignCaptureToLayer(layerId, stream, capName);
@@ -1461,13 +1512,17 @@ G: Toggle snap | Right-click: Menu</pre>
         setTimeout(() => {
             sendLayoutToDisplay();
             videoCtrl.sendPlaylistToDisplay();
-            // Send video data for layers with blob URLs (can't be loaded cross-window)
+            // Send video data / live streams for video layers
             managedLayers.forEach(layer => {
                 if (layer.type === "video") {
-                    const el = document.getElementById(layer.id);
-                    const video = el?.querySelector("video") as HTMLVideoElement | null;
-                    if (video && video.src && video.src.startsWith("blob:")) {
-                        sendVideoDataToDisplay(layer.id, video.src);
+                    if (liveStreams.has(layer.id)) {
+                        sendStreamViaRTC(layer.id);
+                    } else {
+                        const el = document.getElementById(layer.id);
+                        const video = el?.querySelector("video") as HTMLVideoElement | null;
+                        if (video && video.src && video.src.startsWith("blob:")) {
+                            sendVideoDataToDisplay(layer.id, video.src);
+                        }
                     }
                 }
             });

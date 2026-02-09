@@ -74,6 +74,7 @@ export type ChannelMessageType =
     | "UPDATE_LAYOUT" | "ADD_LAYER" | "REMOVE_LAYER"
     | "FULLSCREEN_ENTER" | "FULLSCREEN_EXIT"
     | "SEND_VIDEO_DATA"
+    | "RTC_OFFER" | "RTC_ANSWER"
     | "PING"
     | "DISPLAY_READY" | "PONG" | "SYNC_RESPONSE"
     | "INIT_STATE"
